@@ -1,0 +1,13 @@
+# Judge v1 (§5.8): a judge is (model id, prompt sha256, temperature=0,
+# JSON output schema). Changing the model or any prompt changes the
+# per-judge version string (name@model:prompt_sha12) recorded on every
+# verdict. Ship gate: Cohen's kappa vs human labels >= 0.75 per metric.
+# evidence_coverage is the cross-paradigm retrieval metric — paraphrase
+# counts; see docs/METHODOLOGY_NOTES.md.
+model: gpt-4.1
+temperature: 0.0
+judges:
+  answer_correctness: prompts/judge_answer_correctness.v1.md
+  evidence_coverage: prompts/judge_evidence_coverage.v1.md
+  abstention: prompts/judge_abstention.v1.md
+audit_fraction: 0.10  # big-judge audit share once a small judge is distilled (§5.8.5)
