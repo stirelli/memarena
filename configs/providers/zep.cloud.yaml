@@ -1,0 +1,28 @@
+# zep CLOUD config (§5.5): for paid/vendor-sponsored runs only — the free
+# plan cannot sustain this benchmark (see zep.default.yaml and
+# datasets/LICENSES.md for the live evidence). One Zep user per namespace, each dataset
+# session ingested as text episodes on the user graph via graph.add (one
+# episode per <=9,000-char transcript chunk, created_at backdated to the
+# session's original timestamp). Client pinned: zep-cloud==3.23.0.
+#
+# Why graph.add and not the chat-thread quickstart (measured live
+# 2026-07-02, recorded in datasets/LICENSES.md): Zep bills 1 flex credit
+# per episode and each chat message becomes one episode, so per-turn
+# thread ingestion of the 200-item LongMemEval V1 sample costs ~16,500
+# credits against the free plan's 10,000/month, and the free tier's
+# lower-priority queue processes episodes at ~10-27s each (>100h).
+# Session-level text episodes carry identical content at ~14 credits per
+# item. Vendors are invited to PR a thread-based config for paid runs
+# (§6.2); the row would be re-run and marked vendor-approved.
+#
+# Latency semantics for this provider (providers/zep_adapter.py docstring):
+# add_latency_ms = TIME-TO-ACCEPTED (Zep's ingestion pipeline is async by
+# design); settle_latency_ms carries the async graph-build time, journaled
+# separately. Do not compare zep's add latency with settled providers'.
+#
+# search_scope: episodes = raw ingested content, the Level-1 retrieval
+# surface content-based gold matching needs. Zep's distilled edges (facts)
+# are its higher-level product surface, exercised by Level-2 answer
+# correctness (Day 4); vendors can PR "edges" or another config (§6.2).
+search_scope: episodes
+top_k: 5

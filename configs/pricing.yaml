@@ -14,8 +14,11 @@ mem0:
   usd_per_1k_tokens: 0.0006
 
 zep:
-  pricing_model: per_request
-  usd_per_1k_tokens: 0.0  # free tier (10k credits/month) — credit-limited, not cost-limited; see datasets/LICENSES.md
+  pricing_model: per_token
+  # Graphiti self-hosted mode: multi-pass entity/edge extraction through
+  # gpt-4.1-mini (roughly 2-3x the ingested tokens across passes) plus
+  # embeddings. Blended approximation, documented like every entry here.
+  usd_per_1k_tokens: 0.0015
 
 letta:
   pricing_model: per_request

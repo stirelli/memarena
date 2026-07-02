@@ -129,7 +129,26 @@ new dataset/provider is added.
   episodes/credits, over the 10,000/month plan; session-level `graph.add`
   text episodes are ~2,800 credits and carry identical content. Account
   had 757 credits used before the Day 3 run (probes included).
-- Tier used: **free**, `zep-cloud==3.23.0`.
+- Cloud outcome (measured live 2026-07-02, mid-run): beyond credits, the
+  free plan enforces a small rolling REQUEST budget. The Day 3 cloud run
+  was hard-throttled ("Rate limit exceeded for FREE plan") after ~1.9k
+  requests (~3h, 31 items of rep 0), and a restarted shard with 1s
+  client-side pacing plus ~6-minute patient retries got ZERO further items
+  through. Evidence journals preserved at
+  `results/day3-v1-four-providers/zep__free_plan_throttle_cascade__journal.jsonl`
+  (first cascade) and the restarted shard's journal.
+- Consequence: the zep row for Day 3 runs **Graphiti self-hosted**
+  (graphiti-core==0.29.2, Zep's open-source core, extraction LLM pinned to
+  gpt-4.1-mini at temperature 0, embedded kuzu graph, episode BM25+RRF
+  retrieval). Two graphiti-on-kuzu upstream gaps are worked around and
+  documented in the adapter: the driver never initializes `_database`
+  (read by add_episode), and the FTS indexes its search needs are never
+  created and are static once built (the adapter creates them and rebuilds
+  lazily after ingestion). Cost is metered as OpenAI usage
+  (configs/pricing.yaml). Cloud config remains at
+  configs/providers/zep.cloud.yaml for paid/vendor-sponsored runs.
+- Tier used: cloud attempt **free** (`zep-cloud==3.23.0`), final row
+  **self-hosted** (`graphiti-core==0.29.2`).
 
 ## Letta (provider, not a dataset)
 

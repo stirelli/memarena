@@ -260,3 +260,103 @@ class TestInfo:
         assert info.name == "zep"
         assert info.client_version == "3.23.0"
         assert len(info.config_digest) == 64
+
+
+class FakeGraphiti:
+    """Async fake for graphiti-core's surface the self-hosted mode touches."""
+
+    def __init__(self):
+        self.episodes: list[dict] = []
+        self.removed: list[str] = []
+        self.search_calls: list[dict] = []
+        self.search_results = None  # set per test
+
+    async def add_episode(self, *, name, episode_body, source, source_description, reference_time, group_id):
+        uuid = f"ep-{len(self.episodes) + 1}"
+        self.episodes.append({"uuid": uuid, "name": name, "body": episode_body,
+                              "reference_time": reference_time, "group_id": group_id})
+        return SimpleNamespace(episode=SimpleNamespace(uuid=uuid))
+
+    async def remove_episode(self, uuid):
+        self.removed.append(uuid)
+
+    async def search_(self, query, *, config, group_ids):
+        self.search_calls.append({"query": query, "limit": config.limit, "group_ids": group_ids})
+        return self.search_results or SimpleNamespace(episodes=[], episode_reranker_scores=[])
+
+
+def _oss_provider(fake_graphiti=None):
+    return ZepProvider(
+        {"top_k": 5, "self_hosted": True}, graphiti=fake_graphiti or FakeGraphiti(),
+    )
+
+
+class TestSelfHostedGraphiti:
+    def test_add_is_synchronous_and_settle_is_free(self):
+        fake = FakeGraphiti()
+        provider = _oss_provider(fake)
+        provider.reset("ns1")
+        provider.add("ns1", [{"role": "user", "content": "hello"}],
+                     session_id="s1", timestamp="2023-05-20T02:21:00Z")
+        provider.settle("ns1")  # must not raise and must not need polling
+
+        [episode] = fake.episodes
+        assert episode["group_id"] == "ns1"
+        assert "user: hello" in episode["body"]
+        assert episode["reference_time"].year == 2023
+
+    def test_long_session_splits_into_multiple_episodes(self):
+        fake = FakeGraphiti()
+        provider = _oss_provider(fake)
+        provider.reset("ns1")
+        provider.add("ns1", [{"role": "user", "content": "x" * (MAX_EPISODE_CHARS * 2)}],
+                     session_id="s1", timestamp="2023-01-01T00:00:00Z")
+        assert len(fake.episodes) == 3
+        assert "".join(e["body"] for e in fake.episodes).count("x" * 100) > 0
+
+    def test_re_reset_removes_only_that_namespaces_episodes(self):
+        fake = FakeGraphiti()
+        provider = _oss_provider(fake)
+        provider.reset("ns1")
+        provider.reset("ns2")
+        provider.add("ns1", [{"role": "user", "content": "a"}], session_id="s1",
+                     timestamp="2023-01-01T00:00:00Z")
+        provider.add("ns2", [{"role": "user", "content": "b"}], session_id="s2",
+                     timestamp="2023-01-01T00:00:00Z")
+        provider.reset("ns1")
+        assert fake.removed == ["ep-1"]
+
+    def test_search_maps_episodes_and_scopes_to_namespace(self):
+        fake = FakeGraphiti()
+        from datetime import datetime
+        fake.search_results = SimpleNamespace(
+            episodes=[SimpleNamespace(uuid="ep-9", content="the fact", name="s1-0",
+                                       valid_at=datetime(2023, 1, 1))],
+            episode_reranker_scores=[0.7],
+        )
+        provider = _oss_provider(fake)
+        provider.reset("ns1")
+        [record] = provider.search("ns1", "what fact?", top_k=5)
+        assert record.id == "ep-9"
+        assert record.content == "the fact"
+        assert record.score == 0.7
+        assert record.created_at.startswith("2023-01-01")
+        assert fake.search_calls == [{"query": "what fact?", "limit": 5, "group_ids": ["ns1"]}]
+
+    def test_info_reports_graphiti_version_and_per_token(self):
+        info = _oss_provider().info()
+        assert info.client_version == "graphiti-core-0.29.2"
+        assert info.pricing_model == "per_token"
+
+    def test_graphiti_failure_becomes_provider_error(self):
+        fake = FakeGraphiti()
+
+        async def boom(**kwargs):
+            raise RuntimeError("kuzu exploded")
+
+        fake.add_episode = boom
+        provider = _oss_provider(fake)
+        provider.reset("ns1")
+        with pytest.raises(ProviderError, match="graphiti"):
+            provider.add("ns1", [{"role": "user", "content": "x"}],
+                         session_id="s1", timestamp="2023-01-01T00:00:00Z")
