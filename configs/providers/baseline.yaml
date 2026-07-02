@@ -1,0 +1,5 @@
+# baseline_rag quickstart default (§5.5): naive fixed-size chunking, one
+# pinned embedding model, cosine top-k, no summarization, no graph.
+embedding_model: text-embedding-3-small
+chunk_size: 200
+top_k: 5

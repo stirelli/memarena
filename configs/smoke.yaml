@@ -1,0 +1,16 @@
+run:
+  id: smoke-v1
+  seed: 42
+  repetitions: 1
+  budget_usd_max: 1.0
+
+datasets:
+  - name: smoke
+    sample: null
+
+providers:
+  - adapter: baseline_rag
+    config: configs/providers/baseline.yaml
+
+output:
+  dir: results/smoke

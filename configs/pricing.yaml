@@ -1,0 +1,7 @@
+# Provider-declared pricing table (§5.3). Token counts are approximated as
+# len(text) / 4 chars-per-token — documented approximation, not billed truth;
+# swap in exact usage accounting once a provider adapter reports real usage.
+baseline_rag:
+  embedding_model: text-embedding-3-small
+  pricing_model: per_token
+  usd_per_1k_tokens: 0.00002
