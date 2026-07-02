@@ -281,8 +281,18 @@ class ZepProvider(MemoryProvider):
             self._fts_dirty = True
         self._episodes_added[namespace] = 0
 
+    def _ensure_graphiti(self) -> None:
+        """Cold-process attach: a search-only pass (e.g. the sequential
+        latency re-pass, which pre-seeds the ingestion cache) opens the
+        EXISTING kuzu store without ever calling reset(). _build_graphiti
+        is non-destructive — only _g_reset's first-wipe deletes data."""
+        if self._graphiti is None:
+            self._graphiti = self._build_graphiti()
+
     def _g_add(self, namespace: str, messages, *, session_id: str, timestamp: str) -> None:
         from graphiti_core.nodes import EpisodeType
+
+        self._ensure_graphiti()
 
         reference_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         transcript = session_to_transcript(messages, session_id=session_id, timestamp=timestamp)
@@ -308,6 +318,7 @@ class ZepProvider(MemoryProvider):
             SearchConfig,
         )
 
+        self._ensure_graphiti()
         if self._fts_dirty:
             self._rebuild_episode_fts()
             self._fts_dirty = False
