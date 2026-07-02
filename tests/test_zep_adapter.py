@@ -69,6 +69,12 @@ class FakeZep:
         self.graph = _Graph()
 
 
+@pytest.fixture(autouse=True)
+def _no_pacing(monkeypatch):
+    """Client-side pacing is real-time behavior; unit tests run unpaced."""
+    monkeypatch.setattr("memarena.providers.zep_adapter.MIN_REQUEST_INTERVAL_S", 0.0)
+
+
 def _provider(fake=None, config=None):
     return ZepProvider(config or {"top_k": 5}, client=fake or FakeZep())
 
@@ -168,6 +174,46 @@ class TestSettle:
         provider.reset("ns1")
         provider.settle("ns1")
         assert fake.episode_polls == 0
+
+    def test_settle_survives_transient_throttling(self, monkeypatch):
+        """A 429 during a settle poll is 'no data yet', never a poisoned
+        item (live 2026-07-02: an impatient poll converted one throttling
+        episode into ~150 infra_errors)."""
+        monkeypatch.setattr("memarena.providers.zep_adapter.SETTLE_POLL_INTERVAL_S", 0.0)
+        fake = FakeZep()
+        provider = _provider(fake)
+        provider.reset("ns1")
+        provider.add("ns1", [{"role": "user", "content": "a"}],
+                     session_id="s1", timestamp="2023-01-01T00:00:00Z")
+
+        calls = {"n": 0}
+        real_get = fake.graph.episode.get_by_user_id
+
+        def flaky_get(user_id, *, lastn):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise ApiError(status_code=429, body="Rate limit exceeded for FREE plan")
+            return real_get(user_id, lastn=lastn)
+
+        fake.graph.episode.get_by_user_id = flaky_get
+        fake.episode_batches = [_processed(1)]
+        provider.settle("ns1")
+        assert calls["n"] == 3
+
+    def test_settle_raises_on_non_transient_poll_error(self, monkeypatch):
+        monkeypatch.setattr("memarena.providers.zep_adapter.SETTLE_POLL_INTERVAL_S", 0.0)
+        fake = FakeZep()
+        provider = _provider(fake)
+        provider.reset("ns1")
+        provider.add("ns1", [{"role": "user", "content": "a"}],
+                     session_id="s1", timestamp="2023-01-01T00:00:00Z")
+
+        def forbidden(user_id, *, lastn):
+            raise ApiError(status_code=403, body="forbidden")
+
+        fake.graph.episode.get_by_user_id = forbidden
+        with pytest.raises(ProviderError, match="zep api error"):
+            provider.settle("ns1")
 
 
 class TestSearch:

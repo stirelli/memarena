@@ -21,9 +21,14 @@ MAX_EPISODE_CHARS = 9000
 # Zep's search endpoint caps query length; questions in our datasets are far
 # shorter, but the guard keeps an oversized query a loud error, not a 400.
 MAX_QUERY_CHARS = 400
-SETTLE_POLL_INTERVAL_S = 5.0
+SETTLE_POLL_INTERVAL_S = 10.0
 SETTLE_TIMEOUT_S = 1800.0  # free tier: ~10-27s per episode, lower-priority queue (measured 2026-07-02)
 EPISODES_LASTN_MARGIN = 50  # fetch a little beyond our own count, defensive
+# Client-side pacing: the free plan enforces VARIABLE rate limits and a
+# sustained 429 storm was measured live (2026-07-02) once un-paced retries
+# started hammering. Every API call waits at least this long after the
+# previous one.
+MIN_REQUEST_INTERVAL_S = 1.0
 
 
 def _default_client(api_key: str | None):
@@ -38,10 +43,13 @@ def _is_retryable(exc: BaseException) -> bool:
     return isinstance(exc, ApiError) and getattr(exc, "status_code", None) in (429, 500, 502, 503, 504)
 
 
+# Patient by design: a transient free-plan throttle must stall the run, not
+# poison the journal with infra_error cascades (measured live 2026-07-02:
+# an impatient retry converted a throttling episode into ~150 failed items).
 _retry_transient = retry(
     retry=retry_if_exception(_is_retryable),
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(multiplier=1, max=30),
+    stop=stop_after_attempt(8),
+    wait=wait_exponential(multiplier=2, max=120),
     reraise=True,
 )
 
@@ -112,6 +120,15 @@ class ZepProvider(MemoryProvider):
             raise ProviderError(f"unsupported zep search_scope {self._search_scope!r} (episodes|edges)")
         self._client = client or _default_client(config.get("api_key"))
         self._episodes_added: dict[str, int] = {}
+        self._last_request_at = 0.0
+
+    def _pace(self) -> None:
+        """Client-side rate limiting (MIN_REQUEST_INTERVAL_S) applied before
+        every API call — see the constant's comment for the live evidence."""
+        wait = self._last_request_at + MIN_REQUEST_INTERVAL_S - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._last_request_at = time.monotonic()
 
     def info(self) -> ProviderInfo:
         digest = hashlib.sha256(json.dumps(self._config, sort_keys=True).encode()).hexdigest()
@@ -122,14 +139,17 @@ class ZepProvider(MemoryProvider):
     @_wrap_zep_errors
     def reset(self, namespace: str) -> None:
         try:
+            self._pace()
             self._client.user.delete(namespace)
         except NotFoundError:
             pass  # idempotent wipe: a user that never existed is already reset
+        self._pace()
         self._client.user.add(user_id=namespace)
         self._episodes_added[namespace] = 0
 
     @_retry_transient
     def _graph_add_with_retry(self, *, user_id: str, data: str, created_at: str) -> None:
+        self._pace()
         self._client.graph.add(user_id=user_id, type="text", data=data, created_at=created_at)
 
     @_wrap_zep_errors
@@ -147,9 +167,16 @@ class ZepProvider(MemoryProvider):
         deadline = time.monotonic() + SETTLE_TIMEOUT_S
         lastn = expected + EPISODES_LASTN_MARGIN
         while time.monotonic() < deadline:
-            episodes = self._client.graph.episode.get_by_user_id(namespace, lastn=lastn).episodes or []
-            if len(episodes) >= expected and all(e.processed for e in episodes):
-                return
+            try:
+                self._pace()
+                episodes = self._client.graph.episode.get_by_user_id(namespace, lastn=lastn).episodes or []
+                if len(episodes) >= expected and all(e.processed for e in episodes):
+                    return
+            except ApiError as exc:
+                # A throttled poll is "no data yet", not a failed item — the
+                # deadline still bounds the wait (live 2026-07-02 evidence).
+                if not _is_retryable(exc):
+                    raise
             time.sleep(SETTLE_POLL_INTERVAL_S)
         raise ProviderError(
             f"zep ingestion did not settle within {SETTLE_TIMEOUT_S}s for namespace={namespace!r} "
@@ -158,6 +185,7 @@ class ZepProvider(MemoryProvider):
 
     @_retry_transient
     def _search_with_retry(self, *, query: str, user_id: str, top_k: int):
+        self._pace()
         return self._client.graph.search(
             query=query, user_id=user_id, scope=self._search_scope, limit=top_k,
         )
