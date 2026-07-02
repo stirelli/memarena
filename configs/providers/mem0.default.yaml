@@ -1,0 +1,3 @@
+# mem0 quickstart default (§5.5). Free/Hobby tier — see datasets/LICENSES.md
+# for the quota arithmetic that keeps Day 2's run inside it.
+top_k: 5

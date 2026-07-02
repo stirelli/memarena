@@ -1,0 +1,19 @@
+run:
+  id: day2-v2-baseline-vs-mem0
+  seed: 42
+  repetitions: 1
+  budget_usd_max: 10.0
+
+datasets:
+  - name: longmemeval_v2
+    sample: 100
+    stratify_by: question_type
+
+providers:
+  - adapter: baseline_rag
+    config: configs/providers/baseline.yaml
+  - adapter: mem0
+    config: configs/providers/mem0.default.yaml
+
+output:
+  dir: results/day2-v2-baseline-vs-mem0

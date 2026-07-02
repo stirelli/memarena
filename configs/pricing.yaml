@@ -5,3 +5,7 @@ baseline_rag:
   embedding_model: text-embedding-3-small
   pricing_model: per_token
   usd_per_1k_tokens: 0.00002
+
+mem0:
+  pricing_model: self_hosted
+  usd_per_1k_tokens: 0.0  # free/Hobby tier — no per-token charge to us; quota-limited, not cost-limited
