@@ -23,6 +23,7 @@ dependencies = [
     "numpy>=1.26",
     "pyyaml>=6.0",
     "python-dotenv>=1.0",
+    "mem0ai==2.0.11",
 ]
 
 [project.urls]

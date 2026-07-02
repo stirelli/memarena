@@ -3,11 +3,16 @@ import pytest
 from memarena.datasets.longmemeval_v2 import LongMemEvalV2Loader
 from memarena.datasets.smoke import SmokeDatasetLoader
 from memarena.providers.baseline_rag import BaselineRAGProvider
+from memarena.providers.mem0_adapter import Mem0Provider
 from memarena.registry import get_dataset_class, get_provider_class
 
 
 def test_get_provider_class_known():
     assert get_provider_class("baseline_rag") is BaselineRAGProvider
+
+
+def test_get_provider_class_mem0_known():
+    assert get_provider_class("mem0") is Mem0Provider
 
 
 def test_get_provider_class_unknown_raises_with_helpful_message():

@@ -5,9 +5,11 @@ from memarena.datasets.longmemeval_v2 import LongMemEvalV2Loader
 from memarena.datasets.smoke import SmokeDatasetLoader
 from memarena.providers.base import MemoryProvider
 from memarena.providers.baseline_rag import BaselineRAGProvider
+from memarena.providers.mem0_adapter import Mem0Provider
 
 PROVIDER_REGISTRY: dict[str, type[MemoryProvider]] = {
     "baseline_rag": BaselineRAGProvider,
+    "mem0": Mem0Provider,
 }
 
 DATASET_REGISTRY: dict[str, type[DatasetLoader]] = {
