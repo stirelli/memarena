@@ -39,10 +39,10 @@ def reciprocal_rank(retrieved_contents: list[str], gold_evidence: list[str]) -> 
     return 0.0
 
 
-def mean_of_defined(values: list[float | None]) -> float:
+def mean_of_defined(values: list[float | None]) -> float | None:
     defined = [v for v in values if v is not None]
     if not defined:
-        return 0.0
+        return None
     return sum(defined) / len(defined)
 
 
@@ -52,12 +52,19 @@ def percentile(values: list[float], p: float) -> float:
     return float(np.percentile(values, p))
 
 
+def percentile_of_defined(values: list[float | None], p: float) -> float | None:
+    defined = [v for v in values if v is not None]
+    if not defined:
+        return None
+    return percentile(defined, p)
+
+
 @dataclass(frozen=True)
 class ItemMetric:
     item_id: str
     recall_at_k: dict[int, float | None]
     reciprocal_rank: float | None
-    add_latency_ms: float
+    add_latency_ms: float | None
     search_latency_ms: float
 
 
@@ -65,7 +72,7 @@ def compute_item_metric(
     item_id: str,
     retrieved_contents: list[str],
     gold_evidence: list[str],
-    add_latency_ms: float,
+    add_latency_ms: float | None,
     search_latency_ms: float,
     *,
     k_values: tuple[int, ...] = (1, 3, 5, 10),
@@ -81,10 +88,10 @@ def compute_item_metric(
 
 @dataclass(frozen=True)
 class RunMetrics:
-    recall_at_k: dict[int, float]
-    mrr: float
-    add_latency_p50_ms: float
-    add_latency_p95_ms: float
+    recall_at_k: dict[int, float | None]
+    mrr: float | None
+    add_latency_p50_ms: float | None
+    add_latency_p95_ms: float | None
     search_latency_p50_ms: float
     search_latency_p95_ms: float
     n_items: int
@@ -97,8 +104,8 @@ def aggregate_run(items: list[ItemMetric], *, k_values: tuple[int, ...] = (1, 3,
     return RunMetrics(
         recall_at_k={k: mean_of_defined([item.recall_at_k[k] for item in items]) for k in k_values},
         mrr=mean_of_defined([item.reciprocal_rank for item in items]),
-        add_latency_p50_ms=percentile(add_latencies, 50),
-        add_latency_p95_ms=percentile(add_latencies, 95),
+        add_latency_p50_ms=percentile_of_defined(add_latencies, 50),
+        add_latency_p95_ms=percentile_of_defined(add_latencies, 95),
         search_latency_p50_ms=percentile(search_latencies, 50),
         search_latency_p95_ms=percentile(search_latencies, 95),
         n_items=len(items),

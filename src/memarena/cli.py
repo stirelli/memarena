@@ -32,11 +32,13 @@ def run_command(
 
     for dataset_section in run_config.datasets:
         dataset_cls = get_dataset_class(dataset_section.name)
-        items = dataset_cls().load(
+        dataset_loader = dataset_cls()
+        items = dataset_loader.load(
             sample=dataset_section.sample,
             seed=run_config.run.seed,
             stratify_by=dataset_section.stratify_by,
         )
+        dataset_digest = dataset_loader.sha256()
 
         for provider_section in run_config.providers:
             provider_cls = get_provider_class(provider_section.adapter)
@@ -52,6 +54,7 @@ def run_command(
                 items,
                 run_id=run_config.run.id,
                 seed=run_config.run.seed,
+                dataset_digest=dataset_digest,
                 repetitions=run_config.run.repetitions,
                 top_k=provider_config.get("top_k", 5),
                 budget_usd_max=run_config.run.budget_usd_max,
@@ -62,12 +65,19 @@ def run_command(
             _print_result(provider_section.adapter, dataset_section.name, result)
 
 
+def _fmt(value: float | None, spec: str = ".3f") -> str:
+    return "N/A" if value is None else format(value, spec)
+
+
 def _print_result(provider_name: str, dataset_name: str, result: RunResult) -> None:
     metrics = result.metrics
     typer.echo(f"=== {provider_name} on {dataset_name} ===")
-    typer.echo(f"Recall@5: {metrics.recall_at_k.get(5, float('nan')):.3f}")
-    typer.echo(f"MRR: {metrics.mrr:.3f}")
-    typer.echo(f"Add latency p50/p95 (ms): {metrics.add_latency_p50_ms:.1f} / {metrics.add_latency_p95_ms:.1f}")
+    typer.echo(f"Recall@5: {_fmt(metrics.recall_at_k.get(5))}")
+    typer.echo(f"MRR: {_fmt(metrics.mrr)}")
+    typer.echo(
+        f"Add latency p50/p95 (ms): {_fmt(metrics.add_latency_p50_ms, '.1f')} / "
+        f"{_fmt(metrics.add_latency_p95_ms, '.1f')}"
+    )
     typer.echo(
         f"Search latency p50/p95 (ms): {metrics.search_latency_p50_ms:.1f} / {metrics.search_latency_p95_ms:.1f}"
     )

@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from memarena.cache import IngestionCache, ingestion_cache_key
 from memarena.datasets.base import QAItem, Session
 from memarena.errors import ProviderError
 from memarena.providers.base import MemoryProvider, MemoryRecord, ProviderInfo
@@ -63,6 +64,7 @@ class TestRun:
         result = run(
             FakeProvider(), items, run_id="test-run", seed=42, repetitions=1,
             top_k=5, budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="test-dataset",
         )
 
         assert result.run_id == "test-run"
@@ -94,7 +96,7 @@ class TestRun:
         result = run(
             FakeProvider(), items, run_id="test-run", seed=42, repetitions=1,
             top_k=5, budget_usd_max=1.0, pricing={"usd_per_1k_tokens": 1_000_000},
-            journal_path=journal_path,
+            journal_path=journal_path, dataset_digest="test-dataset",
         )
 
         assert result.budget_truncated is True
@@ -112,6 +114,7 @@ class TestRun:
         result = run(
             FakeProvider(fail_namespaces={"ns_error"}), items, run_id="test-run", seed=42,
             repetitions=1, top_k=5, budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="test-dataset",
         )
 
         assert result.infra_error_count == 1
@@ -128,9 +131,65 @@ class TestRun:
         result = run(
             FakeProvider(), items, run_id="test-run", seed=42, repetitions=2,
             top_k=5, budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="test-dataset",
         )
 
         assert result.metrics.n_items == 2  # 1 item x 2 repetitions
         lines = journal_path.read_text().strip().splitlines()
         assert len(lines) == 2
         assert {json.loads(line)["rep"] for line in lines} == {0, 1}
+
+
+class TestIngestionReuse:
+    def test_second_item_sharing_namespace_reuses_ingestion(self, tmp_path):
+        provider = FakeProvider()
+        items = [
+            _item("i1", "shared-ns", "fact A", "fact", ["fact A"]),
+            _item("i2", "shared-ns", "fact A", "fact", ["fact A"]),
+        ]
+        journal_path = tmp_path / "journal.jsonl"
+
+        result = run(
+            provider, items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="dset1",
+        )
+
+        # only one add() worth of content in the store — reset+add ran once
+        assert provider.store["shared-ns"] == ["fact A"]
+        lines = [json.loads(line) for line in journal_path.read_text().strip().splitlines()]
+        assert lines[0]["ingested"] is True
+        assert lines[1]["ingested"] is False
+        assert lines[1]["add_latency_ms"] is None
+        assert result.metrics.n_items == 2  # both items still scored via search
+
+    def test_fresh_ingest_forces_reingestion_every_item(self, tmp_path):
+        provider = FakeProvider()
+        items = [
+            _item("i1", "shared-ns", "fact A", "fact", ["fact A"]),
+            _item("i2", "shared-ns", "fact A", "fact", ["fact A"]),
+        ]
+        journal_path = tmp_path / "journal.jsonl"
+
+        run(
+            provider, items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="dset1", fresh_ingest=True,
+        )
+        lines = [json.loads(line) for line in journal_path.read_text().strip().splitlines()]
+        assert lines[0]["ingested"] is True
+        assert lines[1]["ingested"] is True
+
+    def test_different_dataset_digest_does_not_reuse_across_separate_runs(self, tmp_path):
+        provider = FakeProvider()
+        items = [_item("i1", "shared-ns", "fact A", "fact", ["fact A"])]
+        cache = IngestionCache()
+        cache.mark_ingested(ingestion_cache_key(provider.info(), dataset_digest="other-dset", namespace="shared-ns"))
+
+        result = run(
+            provider, items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=tmp_path / "j.jsonl",
+            dataset_digest="dset1", ingestion_cache=cache,
+        )
+        assert result.metrics.n_items == 1
+        assert provider.store["shared-ns"] == ["fact A"]  # still ingested — different digest, cache miss

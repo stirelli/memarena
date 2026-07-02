@@ -6,6 +6,7 @@ from memarena.metrics.deterministic import (
     mean_of_defined,
     normalize_content,
     percentile,
+    percentile_of_defined,
     recall_at_k,
     reciprocal_rank,
 )
@@ -63,9 +64,9 @@ class TestMeanOfDefined:
     def test_ignores_none(self):
         assert mean_of_defined([1.0, None, 0.0, None]) == 0.5
 
-    def test_empty_or_all_none_is_zero(self):
-        assert mean_of_defined([]) == 0.0
-        assert mean_of_defined([None, None]) == 0.0
+    def test_empty_or_all_none_is_none(self):
+        assert mean_of_defined([]) is None
+        assert mean_of_defined([None, None]) is None
 
 
 class TestPercentile:
@@ -74,6 +75,14 @@ class TestPercentile:
 
     def test_empty_is_zero(self):
         assert percentile([], 95) == 0.0
+
+
+class TestPercentileOfDefined:
+    def test_ignores_none_values(self):
+        assert percentile_of_defined([None, 10.0, 20.0, None], 50) == 15.0
+
+    def test_all_none_returns_none(self):
+        assert percentile_of_defined([None, None], 50) is None
 
 
 class TestComputeItemMetric:
@@ -119,3 +128,22 @@ class TestAggregateRun:
         assert run.mrr == 0.5              # (1.0 + 0.0) / 2
         assert run.add_latency_p50_ms == percentile([10.0, 30.0, 50.0], 50)
         assert run.search_latency_p95_ms == percentile([20.0, 40.0, 60.0], 95)
+
+    def test_recall_and_mrr_are_none_when_no_item_has_gold_evidence(self):
+        items = [
+            compute_item_metric("i1", ["x"], [], add_latency_ms=5.0, search_latency_ms=10.0),
+            compute_item_metric("i2", ["y"], [], add_latency_ms=None, search_latency_ms=12.0),
+        ]
+        metrics = aggregate_run(items)
+        assert metrics.recall_at_k[5] is None
+        assert metrics.mrr is None
+        assert metrics.n_scored_items == 0
+
+    def test_add_latency_percentiles_ignore_reused_ingestion_items(self):
+        items = [
+            compute_item_metric("i1", ["x"], ["x"], add_latency_ms=100.0, search_latency_ms=1.0),
+            compute_item_metric("i2", ["x"], ["x"], add_latency_ms=None, search_latency_ms=1.0),
+            compute_item_metric("i3", ["x"], ["x"], add_latency_ms=None, search_latency_ms=1.0),
+        ]
+        metrics = aggregate_run(items)
+        assert metrics.add_latency_p50_ms == 100.0  # only the one real ingest counts
