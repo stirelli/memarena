@@ -15,8 +15,15 @@ from memarena.errors import ProviderError
 from memarena.providers.base import MemoryProvider, MemoryRecord, ProviderInfo
 
 CLIENT_VERSION = "2.0.11"  # pinned — mem0ai==2.0.11 in pyproject.toml
-POLL_INTERVAL_S = 1.0
-POLL_TIMEOUT_S = 30.0  # empirically ~5s to settle (confirmed live 2026-07-01); generous margin
+POLL_INTERVAL_S = 10.0
+# The namespace snapshot must hold still this long (with at least one write
+# observed) before ingestion counts as settled. Measured live 2026-07-02 on
+# a real 8-session LongMemEval item: extractions run concurrently server-side,
+# memories trickle in until ~190s after accept, and mid-pipeline gaps of up
+# to 26s were observed between snapshot changes — the window must exceed
+# the largest expected gap or settle fires early.
+QUIET_WINDOW_S = 50.0
+SETTLE_TIMEOUT_S = 600.0
 
 
 class Mem0ClientProtocol(Protocol):
@@ -58,27 +65,31 @@ _retry_rate_limit = retry(
 class Mem0Provider(MemoryProvider):
     """mem0 adapter (§5.5). Namespace = mem0 user_id (spec's convention).
 
-    Mem0's write path (/v3/memories/add/) is asynchronous — add() returns
-    {"event_id", "status": "PENDING"} immediately server-side (confirmed
-    live 2026-07-01: a memory took ~5s to become visible via get_all()). To
-    honor the MemoryProvider sync-façade contract (Appendix A) and to make
-    an immediately-following search() reliable, add() polls get_all() for
-    this namespace until the observed memory set CHANGES in any way (new id,
-    changed content, changed updated_at, or a removal — mem0's own update
-    resolution can consolidate instead of appending, so a count increase is
-    NOT a reliable settle signal), up to POLL_TIMEOUT_S.
+    LATENCY SEMANTICS (§8 Day 3; contrast letta/baseline, compare zep):
+    mem0's write path (/v3/memories/add/) is asynchronous — add() returns
+    {"event_id", "status": "PENDING"} and extraction happens server-side.
+    Day 2 made add() poll get_all() per call (time-to-settled); live V1
+    measurement (2026-07-02) showed one ~11k-char session takes >30s to
+    extract while accepts take ~0.7s and sessions of an item are processed
+    concurrently — per-add polling would serialize those extractions and
+    multiply ingestion wall-clock by sessions-per-item. Day 3 therefore
+    moves mem0 to the accept+settle contract (providers/base.py): add() is
+    TIME-TO-ACCEPTED, and settle() carries the pipeline time, journaled
+    separately as settle_latency_ms.
 
-    Latency semantics (review finding F4/goal item 5): the runner's
-    add_latency_ms for this provider is TIME-TO-SETTLED — accepted by the
-    API and observable via get_all() — not time-to-accepted. The
-    before-snapshot get_all() and the polling get_all() calls are part of
-    the sync façade and are included; that's the real cost of making an
-    async write queryable, not a measurement artifact.
+    settle() condition, stated honestly: the namespace snapshot (ids,
+    contents, updated_at) must show at least one change since reset AND
+    hold still for QUIET_WINDOW_S. Quiescence is a heuristic — mem0
+    exposes no per-event status in mem0ai==2.0.11 (the add response's
+    event_id has no queryable endpoint in this SDK), so a server-side
+    stall longer than the quiet window could declare settle early; the
+    window is sized from live measurements and the residue shows up as
+    (deterministically journaled) retrieval misses, never hidden.
 
-    Known limitation (documented, not silent): a write whose extraction
-    resolves to a true no-op changes nothing observable, so it polls to the
-    deadline and raises ProviderError; the runner records the item as an
-    infra_error, visible in the journal, never as a fake success.
+    Known limitation (kept from Day 2, now per item instead of per
+    session): an item whose EVERY session extracts to a true no-op leaves
+    the snapshot empty, so settle() polls to the deadline and raises;
+    the runner records a visible infra_error, never a fake success.
     """
 
     supports_temporal = True  # mem0 accepts a timestamp per add() call
@@ -88,6 +99,7 @@ class Mem0Provider(MemoryProvider):
         self._config = config
         self._top_k_default = config.get("top_k", 5)
         self._client = client or _default_client(config.get("api_key"))
+        self._pending_adds: dict[str, int] = {}
 
     def info(self) -> ProviderInfo:
         digest = hashlib.sha256(json.dumps(self._config, sort_keys=True).encode()).hexdigest()
@@ -98,6 +110,7 @@ class Mem0Provider(MemoryProvider):
     @_wrap_mem0_errors
     def reset(self, namespace: str) -> None:
         self._client.delete_all(user_id=namespace)
+        self._pending_adds[namespace] = 0
 
     @_retry_rate_limit
     def _add_with_retry(self, messages, *, user_id: str, metadata: dict, timestamp: int) -> dict:
@@ -109,25 +122,37 @@ class Mem0Provider(MemoryProvider):
 
     @_wrap_mem0_errors
     def add(self, namespace: str, messages: list[dict[str, str]], *, session_id: str, timestamp: str) -> None:
-        before = self._memories_snapshot(namespace)
         self._add_with_retry(
             messages, user_id=namespace,
             metadata={"session_id": session_id, "source_timestamp": timestamp},
             timestamp=_iso_to_unix(timestamp),
         )
-        self._poll_until_settled(namespace, before)
+        self._pending_adds[namespace] = self._pending_adds.get(namespace, 0) + 1
 
     def _memories_snapshot(self, namespace: str) -> frozenset[tuple]:
         results = self._client.get_all(filters={"user_id": namespace}).get("results", [])
         return frozenset((r.get("id"), r.get("memory"), r.get("updated_at")) for r in results)
 
-    def _poll_until_settled(self, namespace: str, before: frozenset[tuple]) -> None:
-        deadline = time.monotonic() + POLL_TIMEOUT_S
+    @_wrap_mem0_errors
+    def settle(self, namespace: str) -> None:
+        if self._pending_adds.get(namespace, 0) == 0:
+            return
+        deadline = time.monotonic() + SETTLE_TIMEOUT_S
+        last_snapshot = self._memories_snapshot(namespace)
+        last_change = time.monotonic()
         while time.monotonic() < deadline:
-            if self._memories_snapshot(namespace) != before:
+            quiet_for = time.monotonic() - last_change
+            if last_snapshot and quiet_for >= QUIET_WINDOW_S:
+                self._pending_adds[namespace] = 0
                 return
             time.sleep(POLL_INTERVAL_S)
-        raise ProviderError(f"mem0 add() did not settle within {POLL_TIMEOUT_S}s for namespace={namespace!r}")
+            snapshot = self._memories_snapshot(namespace)
+            if snapshot != last_snapshot:
+                last_snapshot, last_change = snapshot, time.monotonic()
+        raise ProviderError(
+            f"mem0 ingestion did not settle within {SETTLE_TIMEOUT_S}s for namespace={namespace!r} "
+            f"({self._pending_adds.get(namespace, 0)} accepted adds, no stable non-empty snapshot)"
+        )
 
     @_wrap_mem0_errors
     def search(self, namespace: str, query: str, *, top_k: int = 5) -> list[MemoryRecord]:

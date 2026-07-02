@@ -14,6 +14,49 @@ class ChecksumMismatchError(Exception):
     pass
 
 
+class PinnedFileFetcher:
+    """Single-artifact origin fetcher with HARD sha256 verification (§5.6,
+    review finding F10 closed for datasets using this class): the expected
+    digest is pinned in code, a fresh download that does not match it raises,
+    and a cached file is re-hashed on every fetch — a corrupted or tampered
+    local cache is re-downloaded once, then refused. Never redistributes;
+    caches under a gitignored directory."""
+
+    def __init__(self, *, url: str, cache_path: Path, expected_sha256: str):
+        self._url = url
+        self._cache_path = cache_path
+        self._expected = expected_sha256
+
+    def _sha256_of_file(self, path: Path) -> str:
+        hasher = hashlib.sha256()
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                hasher.update(chunk)
+        return hasher.hexdigest()
+
+    def _download(self) -> None:
+        self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+        partial = self._cache_path.with_suffix(self._cache_path.suffix + ".partial")
+        hasher = hashlib.sha256()
+        with httpx.stream("GET", self._url, timeout=600.0, follow_redirects=True) as resp:
+            resp.raise_for_status()
+            with partial.open("wb") as out:
+                for chunk in resp.iter_bytes(chunk_size=1 << 20):
+                    hasher.update(chunk)
+                    out.write(chunk)
+        if hasher.hexdigest() != self._expected:
+            partial.unlink()
+            raise ChecksumMismatchError(f"{self._url}: expected {self._expected}, got {hasher.hexdigest()}")
+        partial.rename(self._cache_path)
+
+    def fetch(self) -> str:
+        if self._cache_path.exists() and self._sha256_of_file(self._cache_path) != self._expected:
+            self._cache_path.unlink()
+        if not self._cache_path.exists():
+            self._download()
+        return str(self._cache_path)
+
+
 class HuggingFaceFetcher:
     """Real origin fetcher for LongMemEval-V2 (§5.6: download-from-origin,
     verify sha256, cache locally). Never redistributes — only caches under

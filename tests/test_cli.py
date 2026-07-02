@@ -73,6 +73,38 @@ class TestRunCommand:
         assert result.exit_code != 0
 
 
+class TestProviderShardFilter:
+    def _two_provider_config(self, tmp_path, output_dir):
+        config = yaml.safe_load(Path("configs/smoke.yaml").read_text())
+        config["output"]["dir"] = str(output_dir)
+        config["providers"] = [
+            {"adapter": "baseline_rag", "config": "configs/providers/baseline.yaml"},
+            {"adapter": "mem0", "config": "configs/providers/mem0.default.yaml"},
+        ]
+        config_path = tmp_path / "two.yaml"
+        config_path.write_text(yaml.dump(config))
+        return config_path
+
+    def test_provider_option_runs_only_the_selected_shard(self, monkeypatch, tmp_path):
+        _patch_openai_embeddings(monkeypatch)
+        config_path = self._two_provider_config(tmp_path, tmp_path / "results")
+
+        result = runner.invoke(app, ["run", "--config", str(config_path), "--provider", "baseline_rag"])
+
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / "results" / "baseline_rag__smoke__journal.jsonl").exists()
+        assert not (tmp_path / "results" / "mem0__smoke__journal.jsonl").exists()
+
+    def test_provider_option_not_in_config_fails_clearly(self, monkeypatch, tmp_path):
+        _patch_openai_embeddings(monkeypatch)
+        config_path = self._two_provider_config(tmp_path, tmp_path / "results")
+
+        result = runner.invoke(app, ["run", "--config", str(config_path), "--provider", "zep"])
+
+        assert result.exit_code != 0
+        assert "not in config" in result.output
+
+
 class TestPrintResultNASafety:
     def test_all_na_metrics_print_na_not_fabricated_zeros(self, capsys):
         # A run where every item infra-errored has no defined metric at all.
@@ -84,6 +116,7 @@ class TestPrintResultNASafety:
 
         metrics = RunMetrics(
             recall_at_k={1: None, 3: None, 5: None},
+            ndcg_at_k={1: None, 3: None, 5: None},
             mrr=None,
             add_latency_p50_ms=None,
             add_latency_p95_ms=None,
@@ -101,6 +134,7 @@ class TestPrintResultNASafety:
 
         out = capsys.readouterr().out
         assert "Recall@5: N/A" in out
+        assert "NDCG@5: N/A" in out
         assert "MRR: N/A" in out
         assert "Add latency p50/p95 (ms): N/A / N/A" in out
         assert "Search latency p50/p95 (ms): N/A / N/A" in out

@@ -1,0 +1,19 @@
+# letta default (§5.5, §8 Day 3): ONE shared store/recall agent for the
+# whole run, one archival passage per dataset session, namespaces isolated
+# by passage tags (ns:{namespace}), retrieval via the agent's archival
+# semantic search with that tag filter. Client pinned: letta-client==1.12.1.
+#
+# Why a shared agent and not agent-per-namespace (verified live
+# 2026-07-02, recorded in datasets/LICENSES.md): Letta Cloud's free tier
+# hard-caps the account at 3 agents (API 402, limit: 3), and a 200-item
+# run with repetitions needs all namespaces alive at once. Tag isolation
+# was verified live in both directions. Vendors are invited to PR an
+# agent-per-namespace config for paid tiers (§6.2).
+#
+# Model/embedding: Letta Cloud server-side defaults (quickstart behavior);
+# pin overrides here (`model`, `embedding`) to change the config digest.
+#
+# Latency semantics for this provider (providers/letta_adapter.py
+# docstring): passages.create embeds synchronously, so add_latency_ms =
+# TIME-TO-SETTLED (same quantity as mem0/baseline_rag).
+top_k: 5

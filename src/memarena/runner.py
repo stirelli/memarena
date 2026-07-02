@@ -103,12 +103,19 @@ def run(
                 }
                 try:
                     add_latency_ms: float | None = None
+                    settle_latency_ms: float | None = None
                     ingest_chars = 0
                     if should_ingest:
                         provider.reset(item.namespace)  # namespace hygiene, outside the timed window
                         add_start = time.perf_counter()
                         ingest_chars = _add_sessions(provider, item)
                         add_latency_ms = (time.perf_counter() - add_start) * 1000
+                        # Accept-only providers finish ingestion here; timed
+                        # apart so add/search percentiles stay pure (§8 Day 3
+                        # latency-semantics contract in providers/base.py).
+                        settle_start = time.perf_counter()
+                        provider.settle(item.namespace)
+                        settle_latency_ms = (time.perf_counter() - settle_start) * 1000
                         cache.mark_ingested(cache_key)
 
                     records, search_latency_ms = _search(provider, item, top_k=top_k)
@@ -116,6 +123,7 @@ def run(
                     infra_error_count += 1
                     record.update(status="infra_error", error=str(exc))
                     journal.write(json.dumps(record) + "\n")
+                    journal.flush()  # a crash must not eat completed items (§5.3 resumability)
                     continue
 
                 retrieved_contents = [r.content for r in records]
@@ -130,12 +138,15 @@ def run(
                 record.update(
                     status="ok",
                     recall_at_k=metric.recall_at_k,
+                    ndcg_at_k=metric.ndcg_at_k,
                     reciprocal_rank=metric.reciprocal_rank,
                     add_latency_ms=metric.add_latency_ms,
+                    settle_latency_ms=settle_latency_ms,
                     search_latency_ms=metric.search_latency_ms,
                     cost_usd=cost_usd,
                 )
                 journal.write(json.dumps(record) + "\n")
+                journal.flush()  # a crash must not eat completed items (§5.3 resumability)
 
                 if budget_usd_max is not None and total_cost_usd > budget_usd_max:
                     budget_truncated = True

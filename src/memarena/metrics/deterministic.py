@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 
@@ -12,11 +13,24 @@ def normalize_content(text: str) -> str:
     return " ".join(text.strip().lower().split())
 
 
+MIN_CONTAINMENT_CHARS = 40  # containment fallback guard: tiny fragments (tail chunks, "yes") never count as evidence
+
+
 def content_matches(a: str, b: str, *, fuzzy_threshold: float = 0.85) -> bool:
-    """Gold-evidence matching (§5.4): exact match after normalization, with a
-    normalized fuzzy fallback for minor punctuation/whitespace drift."""
+    """Gold-evidence matching (§5.4): exact match after normalization, a
+    containment fallback (either normalized string contained in the other,
+    provided the contained one is >= MIN_CONTAINMENT_CHARS — this is what
+    lets a fixed-size chunk of an evidence turn, or a whole session that
+    embeds the evidence turn, count as a hit), and a normalized fuzzy
+    fallback for minor punctuation/whitespace drift. Providers that store
+    rewritten/distilled memories instead of source text can fail all three;
+    that is a documented property of content-based gold mapping, annotated
+    on the leaderboard, never silently corrected."""
     na, nb = normalize_content(a), normalize_content(b)
     if na == nb:
+        return True
+    shorter, longer = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(shorter) >= MIN_CONTAINMENT_CHARS and shorter in longer:
         return True
     return SequenceMatcher(None, na, nb).ratio() >= fuzzy_threshold
 
@@ -39,6 +53,32 @@ def reciprocal_rank(retrieved_contents: list[str], gold_evidence: list[str]) -> 
         if any(content_matches(gold, retrieved) for gold in gold_evidence):
             return 1.0 / rank
     return 0.0
+
+
+def ndcg_at_k(retrieved_contents: list[str], gold_evidence: list[str], k: int) -> float | None:
+    """NDCG@k with binary relevance — the LongMemEval paper's official
+    retrieval metric. Gains are gold-consuming: each distinct gold evidence
+    item credits at most ONE retrieved record (the earliest-ranked match),
+    so duplicate retrievals of the same evidence cannot push DCG above the
+    ideal. IDCG places the min(k, #distinct gold) relevant records at the
+    top ranks. None when the item has no gold evidence (same exclusion rule
+    as Recall@k / RR)."""
+    if not gold_evidence:
+        return None
+    distinct_gold: list[str] = []
+    for gold in gold_evidence:
+        if not any(content_matches(gold, seen) for seen in distinct_gold):
+            distinct_gold.append(gold)
+
+    remaining = list(distinct_gold)
+    dcg = 0.0
+    for rank, retrieved in enumerate(retrieved_contents[:k], start=1):
+        matched = next((i for i, gold in enumerate(remaining) if content_matches(gold, retrieved)), None)
+        if matched is not None:
+            remaining.pop(matched)
+            dcg += 1.0 / math.log2(rank + 1)
+    idcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, min(k, len(distinct_gold)) + 1))
+    return dcg / idcg
 
 
 def mean_of_defined(values: list[float | None]) -> float | None:
@@ -65,6 +105,7 @@ def percentile_of_defined(values: list[float | None], p: float) -> float | None:
 class ItemMetric:
     item_id: str
     recall_at_k: dict[int, float | None]
+    ndcg_at_k: dict[int, float | None]
     reciprocal_rank: float | None
     add_latency_ms: float | None
     search_latency_ms: float
@@ -82,6 +123,7 @@ def compute_item_metric(
     return ItemMetric(
         item_id=item_id,
         recall_at_k={k: recall_at_k(retrieved_contents, gold_evidence, k) for k in k_values},
+        ndcg_at_k={k: ndcg_at_k(retrieved_contents, gold_evidence, k) for k in k_values},
         reciprocal_rank=reciprocal_rank(retrieved_contents, gold_evidence),
         add_latency_ms=add_latency_ms,
         search_latency_ms=search_latency_ms,
@@ -91,6 +133,7 @@ def compute_item_metric(
 @dataclass(frozen=True)
 class RunMetrics:
     recall_at_k: dict[int, float | None]
+    ndcg_at_k: dict[int, float | None]
     mrr: float | None
     add_latency_p50_ms: float | None
     add_latency_p95_ms: float | None
@@ -105,6 +148,7 @@ def aggregate_run(items: list[ItemMetric], *, k_values: tuple[int, ...] = DEFAUL
     search_latencies: list[float | None] = [item.search_latency_ms for item in items]
     return RunMetrics(
         recall_at_k={k: mean_of_defined([item.recall_at_k[k] for item in items]) for k in k_values},
+        ndcg_at_k={k: mean_of_defined([item.ndcg_at_k[k] for item in items]) for k in k_values},
         mrr=mean_of_defined([item.reciprocal_rank for item in items]),
         add_latency_p50_ms=percentile_of_defined(add_latencies, 50),
         add_latency_p95_ms=percentile_of_defined(add_latencies, 95),

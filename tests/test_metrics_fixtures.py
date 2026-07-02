@@ -13,12 +13,15 @@ Aggregation: arithmetic mean over defined (non-None) values only; latency
           defined values only.
 """
 
+import math
+
 import pytest
 
 from memarena.metrics.deterministic import (
     aggregate_run,
     compute_item_metric,
     content_matches,
+    ndcg_at_k,
     recall_at_k,
     reciprocal_rank,
 )
@@ -178,6 +181,100 @@ class TestFixture5MultiGoldAndAggregatePercentiles:
         assert run.add_latency_p95_ms == pytest.approx(48.0)
         assert run.search_latency_p50_ms == pytest.approx(50.0)
         assert run.search_latency_p95_ms == pytest.approx(77.0)
+
+
+class TestFixture6NDCG:
+    """NDCG@k, binary relevance, gold-consuming gains (§8 Day 3; the
+    LongMemEval paper's official retrieval metric).
+
+    Hand computations (log2 discount, rank r contributes 1/log2(r+1)):
+      (a) [other, other, GOLD], gold=[GOLD], k=3:
+          DCG = 1/log2(4) = 0.5; IDCG = 1/log2(2) = 1.0 -> NDCG = 0.5
+          k=1: DCG = 0 -> NDCG = 0.0
+      (b) [GOLD, ...anything], k>=1 -> NDCG = 1.0 with one gold
+      (c) two golds, retrieved [G1, other, G2], k=3:
+          DCG = 1 + 1/log2(4) = 1.5; IDCG = 1 + 1/log2(3)
+      (d) duplicate retrieval of the SAME gold earns nothing twice:
+          [GOLD, GOLD], gold=[GOLD], k=2 -> DCG = 1.0 = IDCG -> 1.0, never >1
+      (e) duplicate gold entries dedupe for IDCG: gold=[GOLD, GOLD],
+          retrieved=[GOLD] -> 1.0
+      (f) no gold -> None; empty retrieval with gold -> 0.0
+    """
+
+    GOLD_2 = "the second treasure is hidden behind the waterfall"
+
+    def test_hit_at_rank_three(self):
+        retrieved = [OTHER_A, OTHER_B, GOLD]
+        assert ndcg_at_k(retrieved, [GOLD], k=3) == pytest.approx(0.5)
+        assert ndcg_at_k(retrieved, [GOLD], k=1) == 0.0
+
+    def test_hit_at_rank_one_is_perfect(self):
+        assert ndcg_at_k([GOLD, OTHER_A], [GOLD], k=5) == pytest.approx(1.0)
+
+    def test_two_golds_split_ranks(self):
+        retrieved = [GOLD, OTHER_A, self.GOLD_2]
+        expected = 1.5 / (1.0 + 1.0 / math.log2(3))
+        assert ndcg_at_k(retrieved, [GOLD, self.GOLD_2], k=3) == pytest.approx(expected)
+
+    def test_duplicate_retrieval_never_exceeds_one(self):
+        assert ndcg_at_k([GOLD, GOLD], [GOLD], k=2) == pytest.approx(1.0)
+
+    def test_duplicate_gold_entries_dedupe(self):
+        assert ndcg_at_k([GOLD], [GOLD, GOLD], k=2) == pytest.approx(1.0)
+
+    def test_no_gold_is_none_and_empty_retrieval_is_zero(self):
+        assert ndcg_at_k([OTHER_A], [], k=5) is None
+        assert ndcg_at_k([], [GOLD], k=5) == 0.0
+
+    def test_aggregate_ndcg_excludes_abstention(self):
+        items = [
+            compute_item_metric("A", [OTHER_A, OTHER_B, GOLD], [GOLD], 10.0, 20.0, k_values=(1, 3)),
+            compute_item_metric("B", [GOLD], [GOLD], None, 40.0, k_values=(1, 3)),
+            compute_item_metric("C", [OTHER_A], [], 50.0, 60.0, k_values=(1, 3)),
+            compute_item_metric("D", [OTHER_A, OTHER_B], [GOLD], 30.0, 80.0, k_values=(1, 3)),
+        ]
+        run = aggregate_run(items, k_values=(1, 3))
+        assert run.ndcg_at_k[3] == pytest.approx((0.5 + 1.0 + 0.0) / 3)
+        assert run.ndcg_at_k[1] == pytest.approx(1 / 3)
+
+    def test_empty_run_ndcg_is_none(self):
+        run = aggregate_run([])
+        assert all(v is None for v in run.ndcg_at_k.values())
+
+
+class TestFixture7ContainmentMatching:
+    """Containment fallback in content_matches (§8 Day 3): a fixed-size
+    chunk of an evidence turn, or a whole session embedding the evidence
+    turn, is a hit — but tiny fragments (< 40 normalized chars) never are.
+
+    LONG_GOLD is 208 chars; its first 200 chars are exactly what
+    baseline_rag's chunker would store, and they fail the 0.85 fuzzy ratio
+    against the full turn only barely — containment is what makes the
+    match deterministic instead of ratio-dependent."""
+
+    LONG_GOLD = (
+        "I graduated with a degree in business administration and I just started "
+        "a new role as an operations manager at the shipping company downtown, "
+        "which I mentioned when we talked about my career plans last spring."
+    )
+
+    def test_chunk_of_evidence_turn_matches(self):
+        chunk = self.LONG_GOLD[:100]
+        assert content_matches(self.LONG_GOLD, chunk)
+
+    def test_session_embedding_evidence_turn_matches(self):
+        session_text = "user: hello there\nassistant: hi!\nuser: " + self.LONG_GOLD + "\nassistant: great!"
+        assert content_matches(self.LONG_GOLD, session_text)
+
+    def test_tiny_fragment_does_not_match(self):
+        assert not content_matches(self.LONG_GOLD, "business administration")
+
+    def test_unrelated_long_text_does_not_match(self):
+        unrelated = (
+            "the quarterly report shows revenue growth across all seven regions "
+            "with particularly strong performance in the northern district offices"
+        )
+        assert not content_matches(self.LONG_GOLD, unrelated)
 
 
 class TestEmptyRunHasNoFabricatedNumbers:

@@ -1,0 +1,31 @@
+# Day 3 full run (§8, revised): 4 providers x 200-item LongMemEval V1
+# stratified sample x 3 repetitions. Repetition count per the goal's quota
+# rule: ~880 mem0 searches remained (>= 700 threshold), so 3 reps stand for
+# ALL providers (see datasets/LICENSES.md, Mem0 section, for the
+# arithmetic). Ingestion is cached across repetitions (§5.3 cached
+# retrieval-only reps — documented; fresh-per-rep is the published-batch
+# protocol). budget_usd_max applies per provider x dataset runner
+# invocation.
+run:
+  id: day3-v1-four-providers
+  seed: 42
+  repetitions: 3
+  budget_usd_max: 15.0
+
+datasets:
+  - name: longmemeval_v1
+    sample: 200
+    stratify_by: question_type
+
+providers:
+  - adapter: baseline_rag
+    config: configs/providers/baseline.yaml
+  - adapter: mem0
+    config: configs/providers/mem0.default.yaml
+  - adapter: zep
+    config: configs/providers/zep.default.yaml
+  - adapter: letta
+    config: configs/providers/letta.default.yaml
+
+output:
+  dir: results/day3-v1-four-providers

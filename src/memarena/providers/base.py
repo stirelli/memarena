@@ -61,3 +61,22 @@ class MemoryProvider(ABC):
     def search(self, namespace: str, query: str,
                *, top_k: int = 5) -> list[MemoryRecord]:
         """Return up to top_k most relevant memories for `query`."""
+
+    def settle(self, namespace: str) -> None:
+        """Block until every memory previously add()ed to `namespace` is
+        queryable. The runner calls this between an item's ingestion and
+        its first search, and times it SEPARATELY from add() (journal
+        field settle_latency_ms — never folded into add or search
+        percentiles).
+
+        Default: no-op. Two documented latency semantics follow (§8 Day 3):
+        - add() returns settled (synchronous stores, or async ones that
+          poll internally, like mem0): keep this default; the provider's
+          add_latency_ms IS time-to-settled.
+        - add() is accept-only (async ingestion pipelines, like zep):
+          implement this hook; the provider's add_latency_ms is
+          time-to-accepted and settle_latency_ms carries the rest.
+        Each adapter's docstring and provider config state which of the
+        two semantics applies — the leaderboard must never compare the
+        two numbers as if they were the same quantity."""
+        return None

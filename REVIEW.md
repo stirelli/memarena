@@ -117,6 +117,18 @@ applies only to the requested depth.
 
 ## Add-latency semantics (goal item 5, now explicit)
 
+> **Day 3 addendum (2026-07-02):** the contract below was extended, not
+> broken. `MemoryProvider` now has an optional `settle(namespace)` hook and
+> TWO documented add-latency semantics (see `providers/base.py`):
+> time-to-settled (baseline_rag, letta) and time-to-accepted plus a
+> separately journaled `settle_latency_ms` (zep, and mem0 as of Day 3).
+> mem0 moved off per-add polling after live V1 measurement showed ~0.7s
+> accepts, >30s per-session extraction, and concurrent server-side
+> processing; per-add settling would have serialized those extractions
+> and multiplied ingestion wall-clock by sessions-per-item. The paragraphs
+> below describe Day 2 as reviewed; the adapters' docstrings are the
+> current source of truth.
+
 **add_latency_ms measures time-to-settled, per item, excluding reset.**
 Precisely: wall-clock from the first `add()` call of an item's sessions to
 the return of the last one, where every adapter's `add()` must return only

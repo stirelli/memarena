@@ -23,11 +23,22 @@ def main() -> None:
 @app.command("run")
 def run_command(
     config: Path = typer.Option(..., "--config", help="Path to a run config YAML file (§Appendix B)."),  # noqa: B008
+    provider: list[str] = typer.Option(  # noqa: B008
+        None, "--provider",
+        help="Run only these adapters from the config (repeatable). "
+             "Enables per-provider sharding (CI matrix, parallel local runs).",
+    ),
 ) -> None:
     """Run a memarena benchmark experiment (§5.3): every provider x dataset
     pair in the config, seeded and journaled, printing Level-1 metrics."""
     load_dotenv()
     run_config = RunConfig.from_yaml(config)
+    if provider:
+        known = {p.adapter for p in run_config.providers}
+        unknown = [name for name in provider if name not in known]
+        if unknown:
+            raise typer.BadParameter(f"--provider {unknown} not in config (config has: {sorted(known)})")
+        run_config.providers = [p for p in run_config.providers if p.adapter in set(provider)]
     pricing_table = load_yaml_dict(PRICING_PATH) if Path(PRICING_PATH).exists() else {}
 
     for dataset_section in run_config.datasets:
@@ -73,6 +84,7 @@ def _print_result(provider_name: str, dataset_name: str, result: RunResult) -> N
     metrics = result.metrics
     typer.echo(f"=== {provider_name} on {dataset_name} ===")
     typer.echo(f"Recall@5: {_fmt(metrics.recall_at_k.get(5))}")
+    typer.echo(f"NDCG@5: {_fmt(metrics.ndcg_at_k.get(5))}")
     typer.echo(f"MRR: {_fmt(metrics.mrr)}")
     typer.echo(
         f"Add latency p50/p95 (ms): {_fmt(metrics.add_latency_p50_ms, '.1f')} / "

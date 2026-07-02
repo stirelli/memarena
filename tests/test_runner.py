@@ -142,6 +142,49 @@ class TestLatencyWindows:
         assert record["add_latency_ms"] == pytest.approx(1000.0)
         assert record["search_latency_ms"] == pytest.approx(500.0)
 
+    def test_settle_is_timed_separately_from_add_and_search(self, monkeypatch, tmp_path):
+        # Accept-only providers (zep) finish ingestion in settle(); its time
+        # must appear in settle_latency_ms only, never inside add or search
+        # (§8 Day 3 latency-semantics contract in providers/base.py).
+        import memarena.runner as runner_module
+
+        clock = _FakeClock()
+        monkeypatch.setattr(runner_module.time, "perf_counter", clock.perf_counter)
+
+        class SettlingProvider(_InstrumentedProvider):
+            def settle(self, namespace):
+                self._clock.advance(7.0)
+
+        provider = SettlingProvider(clock, reset_s=5.0, add_s=1.0, search_s=0.5)
+        items = [_item("i1", "ns1", "the sky is blue", "sky", ["the sky is blue"])]
+        journal_path = tmp_path / "j.jsonl"
+
+        run(
+            provider, items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="d",
+        )
+
+        record = json.loads(journal_path.read_text().strip())
+        assert record["add_latency_ms"] == pytest.approx(1000.0)
+        assert record["settle_latency_ms"] == pytest.approx(7000.0)
+        assert record["search_latency_ms"] == pytest.approx(500.0)
+
+    def test_cached_ingestion_has_null_settle_latency(self, tmp_path):
+        items = [
+            _item("i1", "shared", "fact A", "fact", ["fact A"]),
+            _item("i2", "shared", "fact A", "fact", ["fact A"]),
+        ]
+        journal_path = tmp_path / "j.jsonl"
+        run(
+            FakeProvider(), items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="d",
+        )
+        lines = [json.loads(line) for line in journal_path.read_text().strip().splitlines()]
+        assert lines[0]["settle_latency_ms"] is not None
+        assert lines[1]["settle_latency_ms"] is None
+
 
 class TestRecallKsCappedAtTopK:
     def test_ks_beyond_top_k_are_not_reported(self, tmp_path):

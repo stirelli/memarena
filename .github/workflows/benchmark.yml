@@ -1,0 +1,43 @@
+# Benchmark runs on GitHub-hosted runners (§8 Day 3, goal step 6), sharded
+# one job per provider so a slow or quota-blocked provider never stalls the
+# others. Provider/reader keys come from repo secrets; per-shard journals are
+# uploaded as artifacts. Manual trigger only: benchmark runs cost provider
+# quota and must never fire on every push (contrast ci.yml).
+name: benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: Run config YAML to execute
+        default: configs/run.day3_v1.yaml
+        required: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        provider: [baseline_rag, mem0, zep, letta]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e .
+      - name: Run benchmark shard
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MEM0_API_KEY: ${{ secrets.MEM0_API_KEY }}
+          ZEP_API_KEY: ${{ secrets.ZEP_API_KEY }}
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+        run: memarena run --config "${{ inputs.config }}" --provider "${{ matrix.provider }}"
+      - name: Upload shard results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.provider }}
+          path: results/
+          if-no-files-found: warn

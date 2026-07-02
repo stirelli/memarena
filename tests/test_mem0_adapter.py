@@ -121,34 +121,89 @@ class TestMem0Provider:
 
 
 class TestSettleDetection:
-    """add() returns once the write is observable (time-to-settled).
-    Review finding F4: settling must be detected as ANY change to the
-    namespace's memories, not only a count increase — mem0's own update
-    resolution keeps the count flat on consolidation."""
+    """§8 Day 3: mem0 is accept+settle (see the adapter docstring for the
+    measured rationale). add() must return fast without polling; settle()
+    waits for a non-empty, quiescent namespace snapshot — ANY change resets
+    the quiet window (review finding F4's count-increase trap still
+    applies: consolidation keeps the count flat), and an all-no-op
+    ingestion times out loudly instead of faking success."""
 
     def _fast_poll(self, monkeypatch):
         import memarena.providers.mem0_adapter as adapter_module
-        monkeypatch.setattr(adapter_module, "POLL_TIMEOUT_S", 0.3)
-        monkeypatch.setattr(adapter_module, "POLL_INTERVAL_S", 0.01)
+        monkeypatch.setattr(adapter_module, "POLL_INTERVAL_S", 0.001)
+        monkeypatch.setattr(adapter_module, "QUIET_WINDOW_S", 0.005)
+        monkeypatch.setattr(adapter_module, "SETTLE_TIMEOUT_S", 0.25)
 
-    def test_consolidating_add_settles_without_count_increase(self, monkeypatch):
+    def test_add_is_accept_only_and_never_polls(self):
+        # Even a client whose writes never become observable must not make
+        # add() block or raise — acceptance is the only contract here.
+        provider = Mem0Provider({"top_k": 5}, client=NoopAddClient())
+        provider.reset("ns1")
+        provider.add("ns1", [{"role": "user", "content": "hi"}],
+                     session_id="s1", timestamp="2026-01-01T00:00:00Z")
+
+    def test_settle_accepts_quiescent_consolidated_state(self, monkeypatch):
         self._fast_poll(monkeypatch)
         provider = Mem0Provider({"top_k": 5}, client=ConsolidatingClient())
         provider.reset("ns1")
         provider.add("ns1", [{"role": "user", "content": "I live in Berlin."}],
-                      session_id="s1", timestamp="2026-01-01T00:00:00Z")
-        # Second add consolidates (count stays 1). It must settle, not
-        # stall until the poll deadline and surface as a false infra error.
+                     session_id="s1", timestamp="2026-01-01T00:00:00Z")
+        # Consolidation keeps the count at 1; settle must still pass once
+        # the (changed) snapshot is stable.
         provider.add("ns1", [{"role": "user", "content": "I moved to Amsterdam."}],
-                      session_id="s2", timestamp="2026-02-01T00:00:00Z")
+                     session_id="s2", timestamp="2026-02-01T00:00:00Z")
+        provider.settle("ns1")
         results = provider.search("ns1", "Amsterdam", top_k=5)
         assert len(results) == 1
         assert "Amsterdam" in results[0].content
 
-    def test_noop_add_times_out_loudly(self, monkeypatch):
+    def test_settle_waits_out_a_still_changing_snapshot(self, monkeypatch):
+        self._fast_poll(monkeypatch)
+
+        class TrickleClient(FakeMem0Client):
+            """Memories appear one poll at a time — settle must not return
+            while the snapshot is still moving."""
+
+            def __init__(self):
+                super().__init__()
+                self.trickle = ["fact A", "fact B", "fact C"]
+                self.polls = 0
+
+            def get_all(self, *, filters):
+                self.polls += 1
+                served = self.trickle[: self.polls]
+                return {"results": [{"id": f"m{i}", "memory": m, "updated_at": None}
+                                     for i, m in enumerate(served)]}
+
+        client = TrickleClient()
+        provider = Mem0Provider({"top_k": 5}, client=client)
+        provider.reset("ns1")
+        provider.add("ns1", [{"role": "user", "content": "x"}],
+                     session_id="s1", timestamp="2026-01-01T00:00:00Z")
+        provider.settle("ns1")
+        assert client.polls > len(client.trickle)  # kept polling until quiet
+
+    def test_all_noop_ingestion_times_out_loudly(self, monkeypatch):
         self._fast_poll(monkeypatch)
         provider = Mem0Provider({"top_k": 5}, client=NoopAddClient())
         provider.reset("ns1")
-        with pytest.raises(ProviderError):
-            provider.add("ns1", [{"role": "user", "content": "hi"}],
-                          session_id="s1", timestamp="2026-01-01T00:00:00Z")
+        provider.add("ns1", [{"role": "user", "content": "hi"}],
+                     session_id="s1", timestamp="2026-01-01T00:00:00Z")
+        with pytest.raises(ProviderError, match="did not settle"):
+            provider.settle("ns1")
+
+    def test_settle_without_pending_adds_is_a_noop(self):
+        class CountingClient(FakeMem0Client):
+            def __init__(self):
+                super().__init__()
+                self.get_all_calls = 0
+
+            def get_all(self, *, filters):
+                self.get_all_calls += 1
+                return super().get_all(filters=filters)
+
+        client = CountingClient()
+        provider = Mem0Provider({"top_k": 5}, client=client)
+        provider.reset("ns1")
+        provider.settle("ns1")  # returns immediately — no adds pending
+        assert client.get_all_calls == 0

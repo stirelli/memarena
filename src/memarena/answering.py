@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from memarena.errors import ProviderError
+from memarena.providers.base import MemoryRecord
 
 READER_MODEL = "gpt-5-mini-2025-08-07"  # pinned constant reader (§5.0.1) — confirmed available 2026-07-01
 ABSTENTION_MARKER = "I don't know"
@@ -50,14 +52,44 @@ def _default_chat_fn(model: str) -> ChatFn:
     return chat
 
 
-def answer_question(question: str, retrieved_contents: list[str], *,
+def _parse_timestamp(created_at: str | None) -> datetime | None:
+    if not created_at:
+        return None
+    try:
+        parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    # Naive timestamps are treated as UTC so mixed aware/naive sets stay comparable.
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def chronological(records: list[MemoryRecord]) -> list[MemoryRecord]:
+    """LongMemEval paper protocol: the reader sees retrieved memories in
+    chronological order, not relevance order. Records with a parseable
+    ISO-8601 created_at sort ascending by it (ties keep retrieval order);
+    records without one keep their retrieval order after the dated ones."""
+    dated = [(ts, i, r) for i, r in enumerate(records) if (ts := _parse_timestamp(r.created_at)) is not None]
+    undated = [r for r in records if _parse_timestamp(r.created_at) is None]
+    return [r for _, _, r in sorted(dated, key=lambda t: (t[0], t[1]))] + undated
+
+
+def _context_line(record: MemoryRecord) -> str:
+    if _parse_timestamp(record.created_at) is not None:
+        return f"- [{record.created_at}] {record.content}"
+    return f"- {record.content}"
+
+
+def answer_question(question: str, retrieved: list[MemoryRecord], *,
                      model: str = READER_MODEL, chat_fn: ChatFn | None = None) -> ReaderAnswer:
     """Constant-reader answering layer (§5.0.1, §8 Day 2): ONE pinned reader
-    model, abstention-aware prompt. Not wired into the Day-2 CLI run — the
-    Day 2 exit criterion is deterministic (Level-1) metrics only (§8); Day 4
-    (judge work) calls this against the calibrated grader."""
+    model, abstention-aware prompt. Retrieved memories are re-ordered
+    chronologically (with their timestamps shown) before the reader — the
+    LongMemEval paper's reading protocol (§8 Day 3). Not wired into the
+    Level-1 CLI runs; Day 4 (judge work) calls this against the calibrated
+    grader."""
     fn = chat_fn or _default_chat_fn(model)
-    context = "\n".join(f"- {c}" for c in retrieved_contents) if retrieved_contents else "(no context retrieved)"
+    ordered = chronological(retrieved)
+    context = "\n".join(_context_line(r) for r in ordered) if ordered else "(no context retrieved)"
     user_prompt = f"Context:\n{context}\n\nQuestion: {question}"
     try:
         text = fn(SYSTEM_PROMPT, user_prompt)
