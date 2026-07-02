@@ -20,10 +20,14 @@ Phase 2 — fresh-ingest add-latency subsample for the self-hosted rows
   (the full-run stores are preserved for Day 4). Reported as indicative
   p50 with n declared.
 
-Run: .venv/bin/python scripts/day3_latency_repass.py
+Run: .venv/bin/python scripts/day3_latency_repass.py [--provider NAME ...]
+(--provider limits both phases; a provider whose Day 3 store is absent or
+partial, e.g. an operator-stopped shard, must be excluded and re-passed
+together with its own re-run.)
 """
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -67,8 +71,8 @@ def _provider(name: str, overrides: dict | None = None):
     return get_provider_class(name)(config), config
 
 
-def search_only_repass(items, digest, pricing) -> None:
-    for name in ("baseline_rag", "mem0", "zep", "letta"):
+def search_only_repass(items, digest, pricing, providers) -> None:
+    for name in providers:
         provider, config = _provider(name)
         journal = OUT_DIR / f"{name}__longmemeval_v1__repass__journal.jsonl"
         if name == "baseline_rag":
@@ -89,9 +93,9 @@ def search_only_repass(items, digest, pricing) -> None:
               f"({m.n_items} rows, {result.infra_error_count} infra errors)", flush=True)
 
 
-def fresh_ingest_addlatency(items, digest, pricing) -> None:
+def fresh_ingest_addlatency(items, digest, pricing, providers) -> None:
     subsample = stratified_sample(items, sample=ADDLAT_N, seed=SEED, stratify_by="question_type")
-    for name in ("mem0", "zep"):
+    for name in [p for p in ("mem0", "zep") if p in providers]:
         provider, config = _provider(name, ADDLAT_OVERRIDES[name])
         journal = OUT_DIR / f"{name}__longmemeval_v1__addlatency_n{ADDLAT_N}__journal.jsonl"
         result = run(
@@ -105,12 +109,17 @@ def fresh_ingest_addlatency(items, digest, pricing) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--provider", action="append", choices=sorted(PROVIDER_CONFIGS), default=None)
+    args = parser.parse_args()
+    providers = tuple(args.provider) if args.provider else ("baseline_rag", "mem0", "zep", "letta")
+
     load_dotenv()
     items, digest = _load_items()
     pricing = load_yaml_dict("configs/pricing.yaml")
-    print(f"sequential re-pass over {len(items)} items (digest {digest[:12]})", flush=True)
-    search_only_repass(items, digest, pricing)
-    fresh_ingest_addlatency(items, digest, pricing)
+    print(f"sequential re-pass over {len(items)} items (digest {digest[:12]}) for {providers}", flush=True)
+    search_only_repass(items, digest, pricing, providers)
+    fresh_ingest_addlatency(items, digest, pricing, providers)
     print("done", flush=True)
 
 
