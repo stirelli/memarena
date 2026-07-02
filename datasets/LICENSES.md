@@ -96,11 +96,26 @@ new dataset/provider is added.
   so the Day 3 run keeps **3 repetitions for all providers** (200 items x 3
   reps = 600 searches for mem0; ingestion is cached across repetitions,
   which the methodology notes as cached-retrieval reps per section 5.3).
-- Ambiguity, recorded: mem0's pricing page does not define whether
-  `get_all()` (used by our settle polling) counts toward "retrievals".
-  Day 2's live run (~170 get_all calls) was not throttled or blocked. If
-  mem0 hard-enforces get_all against the same bucket mid-run, the journal
-  will show it as infra_errors; we report, never mask.
+- Ambiguity, recorded (and RESOLVED, see next bullet): mem0's pricing page
+  does not define whether `get_all()` (used by our settle polling) counts
+  toward "retrievals". Day 2's live run (~170 get_all calls) was not
+  throttled or blocked.
+- RESOLUTION, measured live 2026-07-02 during the Day 3 run: the platform
+  free tier bills `search()` AND `get_all()` against ONE 1,000/month
+  retrieval bucket. Quota errors carry {"event_type": "SEARCH"}; after the
+  bucket emptied, `add()` still succeeded while both read endpoints
+  returned HTTP 429 "Usage quota exceeded for this billing period". The
+  Day 3 platform attempt died 21 items in (evidence journal preserved at
+  `results/day3-v1-four-providers/mem0__platform_quota_blocked__journal.jsonl`).
+- Consequence: the mem0 row for Day 3 runs **mem0 OSS self-hosted**
+  (mem0ai==2.0.11 `Memory`, extraction LLM pinned to gpt-4.1-mini at
+  temperature 0, embedded qdrant store), which is the vendor's open-source
+  core with no platform quota. Cost is metered as OpenAI usage
+  (configs/pricing.yaml). OSS gates timestamp backdating behind a platform
+  API key (ValueError "Temporal reasoning requires a Mem0 API key",
+  measured live), so the row carries supports_temporal=False as a
+  leaderboard annotation. The platform config remains available at
+  configs/providers/mem0.platform.yaml for paid/vendor-sponsored runs.
 
 ## Zep (provider, not a dataset)
 

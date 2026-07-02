@@ -115,7 +115,8 @@ class LongMemEvalV1Loader(DatasetLoader):
         self._raw_items = json.loads(content)
 
     def sha256(self) -> str:
-        self._load_raw()
+        if self._artifact_sha256 is None:
+            self._load_raw()
         assert self._artifact_sha256 is not None
         return self._artifact_sha256
 
@@ -123,6 +124,9 @@ class LongMemEvalV1Loader(DatasetLoader):
              stratify_by: str | None = "question_type") -> list[QAItem]:
         self._load_raw()
         items = [self._to_qaitem(raw) for raw in self._raw_items]
+        # Release the parsed 500-item haystacks (~GBs as Python objects);
+        # QAItems keep only their capped sessions. A second load() re-parses.
+        self._raw_items = None
         if sample is None:
             return sorted(items, key=lambda i: i.id)
         return stratified_sample(items, sample=sample, seed=seed, stratify_by=stratify_by)

@@ -1,0 +1,10 @@
+# mem0 platform API config (§5.5): the hosted product, quickstart defaults.
+# NOT the Day 3 default: the free tier's 1,000/month retrieval bucket
+# (search + get_all combined, measured live 2026-07-02) cannot sustain a
+# 200-item benchmark run — see datasets/LICENSES.md and
+# configs/providers/mem0.default.yaml. Use for paid/vendor-sponsored runs.
+#
+# Latency semantics for this mode: add() is TIME-TO-ACCEPTED (async write
+# path); settle_latency_ms carries the extraction pipeline time, journaled
+# separately (quiescent-snapshot detection, providers/mem0_adapter.py).
+top_k: 5

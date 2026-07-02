@@ -45,6 +45,23 @@ def _default_client(api_key: str | None) -> Mem0ClientProtocol:
     return MemoryClient(api_key=key)
 
 
+def _oss_client(config: dict):
+    """mem0 OSS (self-hosted) client: the vendor's open-source extraction
+    pipeline running locally against an embedded qdrant store. Extraction
+    LLM is pinned in the provider config (part of the config digest)."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise ProviderError("OPENAI_API_KEY is not set; mem0 self-hosted mode runs its extraction LLM through it.")
+    from mem0 import Memory
+    return Memory.from_config({
+        "llm": {"provider": "openai", "config": {
+            "model": config.get("oss_llm_model", "gpt-4.1-mini"), "temperature": 0.0,
+        }},
+        "vector_store": {"provider": "qdrant", "config": {
+            "path": config.get("oss_vector_store_path", ".cache/mem0_oss"),
+        }},
+    })
+
+
 def _wrap_mem0_errors(fn):
     def wrapped(*args, **kwargs):
         try:
@@ -65,7 +82,21 @@ _retry_rate_limit = retry(
 class Mem0Provider(MemoryProvider):
     """mem0 adapter (§5.5). Namespace = mem0 user_id (spec's convention).
 
-    LATENCY SEMANTICS (§8 Day 3; contrast letta/baseline, compare zep):
+    TWO MODES, selected by config `self_hosted` (see
+    configs/providers/mem0.default.yaml for why OSS is the Day 3 default):
+    - self_hosted: true — mem0 OSS, the vendor's open-source extraction
+      pipeline running locally (pinned extraction LLM, embedded qdrant).
+      add() extracts synchronously, so add_latency_ms is TIME-TO-SETTLED
+      and settle() is a no-op. No platform quota; cost = metered OpenAI
+      usage (pricing_model per_token).
+    - self_hosted absent/false — the mem0 platform API. Measured live
+      2026-07-02: the free tier bills search() AND get_all() against ONE
+      1,000/month retrieval bucket ({"event_type": "SEARCH"} quota errors),
+      which the Day 3 run exhausted 21 items in; the evidence journal is
+      preserved at results/day3-v1-four-providers/
+      mem0__platform_quota_blocked__journal.jsonl.
+
+    PLATFORM LATENCY SEMANTICS (§8 Day 3; contrast letta/baseline, compare zep):
     mem0's write path (/v3/memories/add/) is asynchronous — add() returns
     {"event_id", "status": "PENDING"} and extraction happens server-side.
     Day 2 made add() poll get_all() per call (time-to-settled); live V1
@@ -92,19 +123,29 @@ class Mem0Provider(MemoryProvider):
     the runner records a visible infra_error, never a fake success.
     """
 
-    supports_temporal = True  # mem0 accepts a timestamp per add() call
+    supports_temporal = True  # platform accepts a timestamp per add(); False in self-hosted mode (see __init__)
     supports_update_resolution = True  # mem0's own extraction resolves updates
 
     def __init__(self, config: dict, *, client: Mem0ClientProtocol | None = None):
         self._config = config
         self._top_k_default = config.get("top_k", 5)
-        self._client = client or _default_client(config.get("api_key"))
+        self._self_hosted = bool(config.get("self_hosted"))
+        if client is not None:
+            self._client = client
+        else:
+            self._client = _oss_client(config) if self._self_hosted else _default_client(config.get("api_key"))
         self._pending_adds: dict[str, int] = {}
+        if self._self_hosted:
+            # OSS gates the timestamp-backdating parameter behind a platform
+            # API key (measured live 2026-07-02: ValueError "Temporal
+            # reasoning requires a Mem0 API key"), so the flag is honest.
+            self.supports_temporal = False
 
     def info(self) -> ProviderInfo:
         digest = hashlib.sha256(json.dumps(self._config, sort_keys=True).encode()).hexdigest()
         return ProviderInfo(
-            name="mem0", client_version=CLIENT_VERSION, config_digest=digest, pricing_model="self_hosted",
+            name="mem0", client_version=CLIENT_VERSION, config_digest=digest,
+            pricing_model="per_token" if self._self_hosted else "per_request",
         )
 
     @_wrap_mem0_errors
@@ -122,10 +163,15 @@ class Mem0Provider(MemoryProvider):
 
     @_wrap_mem0_errors
     def add(self, namespace: str, messages: list[dict[str, str]], *, session_id: str, timestamp: str) -> None:
+        metadata = {"session_id": session_id, "source_timestamp": timestamp}
+        if self._self_hosted:
+            # Synchronous local extraction: settled on return (time-to-settled
+            # semantics, like baseline/letta). No timestamp param — OSS gates
+            # it behind a platform API key.
+            self._client.add(messages, user_id=namespace, metadata=metadata)
+            return
         self._add_with_retry(
-            messages, user_id=namespace,
-            metadata={"session_id": session_id, "source_timestamp": timestamp},
-            timestamp=_iso_to_unix(timestamp),
+            messages, user_id=namespace, metadata=metadata, timestamp=_iso_to_unix(timestamp),
         )
         self._pending_adds[namespace] = self._pending_adds.get(namespace, 0) + 1
 

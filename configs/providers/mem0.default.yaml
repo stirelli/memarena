@@ -1,3 +1,20 @@
-# mem0 quickstart default (§5.5). Free/Hobby tier — see datasets/LICENSES.md
-# for the quota arithmetic that keeps Day 2's run inside it.
+# mem0 default (§5.5, §8 Day 3): mem0 OSS self-hosted — the vendor's
+# open-source extraction pipeline running locally with a pinned extraction
+# LLM and an embedded qdrant store. mem0ai==2.0.11 pinned.
+#
+# Why self-hosted and not the platform API (measured live 2026-07-02,
+# recorded in datasets/LICENSES.md): the platform free tier bills search()
+# AND get_all() against one 1,000/month retrieval bucket, which this
+# benchmark's scale exhausts almost immediately (the Day 3 attempt died 21
+# items in; evidence journal preserved in results/). The platform config
+# lives in mem0.platform.yaml for paid/vendor-sponsored runs (§6.2).
+#
+# Latency semantics for this mode (providers/mem0_adapter.py docstring):
+# local extraction is synchronous, so add_latency_ms = TIME-TO-SETTLED
+# (same quantity as baseline_rag/letta). Note: OSS gates timestamp
+# backdating behind a platform API key, so supports_temporal=False for
+# this row (leaderboard annotation, never a silent penalty).
+self_hosted: true
+oss_llm_model: gpt-4.1-mini
+oss_vector_store_path: .cache/mem0_oss
 top_k: 5

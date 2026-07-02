@@ -77,7 +77,7 @@ class TestMem0Provider:
     def test_info(self):
         info = self.provider.info()
         assert info.name == "mem0"
-        assert info.pricing_model == "self_hosted"  # free-tier hosted API — see LICENSES.md
+        assert info.pricing_model == "per_request"  # platform API mode — see LICENSES.md
         assert len(info.config_digest) == 64
 
     def test_reset_calls_delete_all(self):
@@ -191,6 +191,39 @@ class TestSettleDetection:
                      session_id="s1", timestamp="2026-01-01T00:00:00Z")
         with pytest.raises(ProviderError, match="did not settle"):
             provider.settle("ns1")
+
+    def test_oss_mode_add_is_synchronous_and_settle_free(self):
+        """self_hosted mode: add() passes NO timestamp param (OSS gates it
+        behind a platform key), never tracks pending writes, and settle()
+        therefore never polls."""
+        class OssFake(FakeMem0Client):
+            def __init__(self):
+                super().__init__()
+                self.get_all_calls = 0
+                self.add_kwargs: list[dict] = []
+
+            def add(self, messages, *, user_id, metadata=None, timestamp=None):
+                self.add_kwargs.append({"metadata": metadata, "timestamp": timestamp})
+                return super().add(messages, user_id=user_id, metadata=metadata)
+
+            def get_all(self, *, filters):
+                self.get_all_calls += 1
+                return super().get_all(filters=filters)
+
+        client = OssFake()
+        provider = Mem0Provider({"top_k": 5, "self_hosted": True}, client=client)
+        provider.reset("ns1")
+        provider.add("ns1", [{"role": "user", "content": "My dog's name is Biscuit."}],
+                     session_id="s1", timestamp="2026-01-01T00:00:00Z")
+        provider.settle("ns1")
+
+        assert client.add_kwargs[0]["timestamp"] is None
+        assert client.add_kwargs[0]["metadata"]["source_timestamp"] == "2026-01-01T00:00:00Z"
+        assert client.get_all_calls == 0
+        assert provider.supports_temporal is False
+        assert provider.info().pricing_model == "per_token"
+        [record] = provider.search("ns1", "dog", top_k=5)
+        assert "Biscuit" in record.content
 
     def test_settle_without_pending_adds_is_a_noop(self):
         class CountingClient(FakeMem0Client):
