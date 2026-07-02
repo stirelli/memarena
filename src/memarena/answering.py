@@ -7,7 +7,12 @@ from datetime import UTC, datetime
 from memarena.errors import ProviderError
 from memarena.providers.base import MemoryRecord
 
-READER_MODEL = "gpt-5-mini-2025-08-07"  # pinned constant reader (§5.0.1) — confirmed available 2026-07-01
+# Pinned constant reader (§5.0.1). Re-pinned 2026-07-02 before the first
+# real reader run: the previous pin (gpt-5-mini-2025-08-07) rejects
+# temperature=0 (400, the gpt-5 family only allows the default), and a
+# constant reader must be deterministic. Nothing was generated or
+# published under the old pin.
+READER_MODEL = "gpt-4.1-mini"
 ABSTENTION_MARKER = "I don't know"
 
 ChatFn = Callable[[str, str], str]  # (system_prompt, user_prompt) -> reply text
