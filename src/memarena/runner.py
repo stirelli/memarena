@@ -9,6 +9,7 @@ from memarena.cache import IngestionCache, ingestion_cache_key
 from memarena.datasets.base import QAItem
 from memarena.errors import ProviderError
 from memarena.metrics.deterministic import (
+    DEFAULT_K_VALUES,
     ItemMetric,
     RunMetrics,
     aggregate_run,
@@ -35,9 +36,12 @@ class RunResult:
     n_items_attempted: int
 
 
-def _ingest(provider: MemoryProvider, item: QAItem) -> int:
-    """Reset the namespace and add every session. Returns total ingested chars."""
-    provider.reset(item.namespace)
+def _add_sessions(provider: MemoryProvider, item: QAItem) -> int:
+    """Add every session (the caller resets OUTSIDE the timed window — §5.7:
+    add latency is wall-clock around add() only). Returns total ingested
+    chars. For async-write providers the adapter's sync façade returns only
+    once the write is settled (queryable), so this measures time-to-settled
+    consistently across providers."""
     ingest_chars = 0
     for session in item.sessions:
         provider.add(item.namespace, session.messages, session_id=session.session_id, timestamp=session.timestamp)
@@ -80,6 +84,9 @@ def run(
     provider_info = provider.info()
 
     usd_per_1k_tokens = (pricing or {}).get("usd_per_1k_tokens", 0.0)
+    # Recall@k for k beyond top_k would mislabel a top-k-capped retrieval;
+    # only compute what the retrieval depth can support.
+    k_values = tuple(k for k in DEFAULT_K_VALUES if k <= top_k)
     successful_metrics: list[ItemMetric] = []
     total_cost_usd = 0.0
     infra_error_count = 0
@@ -98,8 +105,9 @@ def run(
                     add_latency_ms: float | None = None
                     ingest_chars = 0
                     if should_ingest:
+                        provider.reset(item.namespace)  # namespace hygiene, outside the timed window
                         add_start = time.perf_counter()
-                        ingest_chars = _ingest(provider, item)
+                        ingest_chars = _add_sessions(provider, item)
                         add_latency_ms = (time.perf_counter() - add_start) * 1000
                         cache.mark_ingested(cache_key)
 
@@ -113,6 +121,7 @@ def run(
                 retrieved_contents = [r.content for r in records]
                 metric = compute_item_metric(
                     item.id, retrieved_contents, item.gold_evidence, add_latency_ms, search_latency_ms,
+                    k_values=k_values,
                 )
                 total_chars = ingest_chars + len(item.question)
                 cost_usd = estimate_cost_usd(total_chars, usd_per_1k_tokens=usd_per_1k_tokens)
@@ -137,7 +146,7 @@ def run(
     return RunResult(
         run_id=run_id,
         seed=seed,
-        metrics=aggregate_run(successful_metrics),
+        metrics=aggregate_run(successful_metrics, k_values=k_values),
         total_cost_usd=total_cost_usd,
         budget_truncated=budget_truncated,
         infra_error_count=infra_error_count,

@@ -52,6 +52,124 @@ class TestEstimateCostUsd:
     def test_zero_chars_is_zero_cost(self):
         assert estimate_cost_usd(0, usd_per_1k_tokens=0.02) == 0.0
 
+    def test_known_token_count_hand_computed(self):
+        # 1008 chars at the documented 4 chars/token = 252 tokens;
+        # at $1.00 per 1k tokens the cost is exactly $0.252.
+        assert estimate_cost_usd(1008, usd_per_1k_tokens=1.0) == pytest.approx(0.252)
+
+
+class TestCostMeter:
+    def test_run_cost_matches_hand_computed_char_count(self, tmp_path):
+        # Ingested content: 1000 chars. Question: 8 chars. Total 1008 chars
+        # = 252 tokens at 4 chars/token -> $0.252 at $1.00/1k tokens.
+        items = [_item("i1", "ns1", "a" * 1000, "abcdefgh", [])]
+        result = run(
+            FakeProvider(), items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing={"usd_per_1k_tokens": 1.0},
+            journal_path=tmp_path / "j.jsonl", dataset_digest="d",
+        )
+        assert result.total_cost_usd == pytest.approx(0.252)
+
+    def test_cached_ingestion_charges_only_the_question(self, tmp_path):
+        # Second item shares the namespace: ingestion is cached, so only its
+        # 8-char question (2 tokens = $0.002) is added on top of $0.252.
+        items = [
+            _item("i1", "shared", "a" * 1000, "abcdefgh", []),
+            _item("i2", "shared", "a" * 1000, "abcdefgh", []),
+        ]
+        result = run(
+            FakeProvider(), items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing={"usd_per_1k_tokens": 1.0},
+            journal_path=tmp_path / "j.jsonl", dataset_digest="d",
+        )
+        assert result.total_cost_usd == pytest.approx(0.254)
+
+
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def perf_counter(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class _InstrumentedProvider(FakeProvider):
+    """Advances a fake clock by a fixed amount per operation so the runner's
+    latency windows can be asserted exactly, with no real sleeps."""
+
+    def __init__(self, clock: _FakeClock, *, reset_s: float, add_s: float, search_s: float):
+        super().__init__()
+        self._clock = clock
+        self._reset_s, self._add_s, self._search_s = reset_s, add_s, search_s
+
+    def reset(self, namespace):
+        self._clock.advance(self._reset_s)
+        super().reset(namespace)
+
+    def add(self, namespace, messages, *, session_id, timestamp):
+        self._clock.advance(self._add_s)
+        super().add(namespace, messages, session_id=session_id, timestamp=timestamp)
+
+    def search(self, namespace, query, *, top_k=5):
+        self._clock.advance(self._search_s)
+        return super().search(namespace, query, top_k=top_k)
+
+
+class TestLatencyWindows:
+    def test_add_latency_excludes_reset_and_search_latency_is_search_only(self, monkeypatch, tmp_path):
+        # Spec Appendix A / §5.7: latency is wall-clock around add/search,
+        # measured by the runner. reset() is namespace hygiene, not add cost.
+        # reset takes 5s, the single add takes 1s, search takes 0.5s:
+        # add_latency must be 1000ms (not 6000ms), search_latency 500ms.
+        import memarena.runner as runner_module
+
+        clock = _FakeClock()
+        monkeypatch.setattr(runner_module.time, "perf_counter", clock.perf_counter)
+        provider = _InstrumentedProvider(clock, reset_s=5.0, add_s=1.0, search_s=0.5)
+        items = [_item("i1", "ns1", "the sky is blue", "sky", ["the sky is blue"])]
+        journal_path = tmp_path / "j.jsonl"
+
+        run(
+            provider, items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="d",
+        )
+
+        record = json.loads(journal_path.read_text().strip())
+        assert record["add_latency_ms"] == pytest.approx(1000.0)
+        assert record["search_latency_ms"] == pytest.approx(500.0)
+
+
+class TestRecallKsCappedAtTopK:
+    def test_ks_beyond_top_k_are_not_reported(self, tmp_path):
+        # With top_k=3 only 3 records are ever requested, so "Recall@5" and
+        # "Recall@10" would mislabel a top-3 measurement. Only k <= top_k
+        # may be computed and journaled.
+        items = [_item("i1", "ns1", "the sky is blue", "sky", ["the sky is blue"])]
+        journal_path = tmp_path / "j.jsonl"
+
+        result = run(
+            FakeProvider(), items, run_id="t", seed=42, repetitions=1, top_k=3,
+            budget_usd_max=None, pricing=None, journal_path=journal_path,
+            dataset_digest="d",
+        )
+
+        assert set(result.metrics.recall_at_k) == {1, 3}
+        record = json.loads(journal_path.read_text().strip())
+        assert set(record["recall_at_k"]) == {"1", "3"}
+
+    def test_default_top_k_5_reports_up_to_5(self, tmp_path):
+        items = [_item("i1", "ns1", "the sky is blue", "sky", ["the sky is blue"])]
+        result = run(
+            FakeProvider(), items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=tmp_path / "j.jsonl",
+            dataset_digest="d",
+        )
+        assert set(result.metrics.recall_at_k) == {1, 3, 5}
+
 
 class TestRun:
     def test_basic_run_computes_metrics_and_writes_journal(self, tmp_path):

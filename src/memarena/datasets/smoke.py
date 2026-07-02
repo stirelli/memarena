@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 
 from memarena.datasets.base import DatasetLoader, QAItem, Session
+from memarena.datasets.sampling import stratified_sample
 
 # Self-authored, 20-item synthetic smoke set (§5.2, §8 Day 1) — no license
 # friction, no download, ships with the package. Stratified 4 items per
@@ -359,7 +359,7 @@ class SmokeDatasetLoader(DatasetLoader):
         items = [self._to_qaitem(raw) for raw in _RAW_ITEMS]
         if sample is None or sample >= len(items):
             return items
-        return self._stratified_sample(items, sample, seed, stratify_by)
+        return stratified_sample(items, sample=sample, seed=seed, stratify_by=stratify_by)
 
     @staticmethod
     def _to_qaitem(raw: dict) -> QAItem:
@@ -377,24 +377,3 @@ class SmokeDatasetLoader(DatasetLoader):
             answerable=raw.get("answerable", True),
             gold_answer=raw.get("gold_answer"),
         )
-
-    @staticmethod
-    def _stratified_sample(items: list[QAItem], sample: int, seed: int,
-                            stratify_by: str | None) -> list[QAItem]:
-        rng = random.Random(seed)
-        if not stratify_by:
-            return sorted(rng.sample(items, sample), key=lambda i: i.id)
-
-        strata: dict[str, list[QAItem]] = {}
-        for item in items:
-            strata.setdefault(getattr(item, stratify_by), []).append(item)
-
-        n_strata = len(strata)
-        base_quota = sample // n_strata
-        remainder = sample % n_strata
-        selected: list[QAItem] = []
-        for i, (_, bucket) in enumerate(sorted(strata.items())):
-            quota = base_quota + (1 if i < remainder else 0)
-            quota = min(quota, len(bucket))
-            selected.extend(rng.sample(bucket, quota))
-        return sorted(selected, key=lambda i: i.id)

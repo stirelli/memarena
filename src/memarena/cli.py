@@ -79,7 +79,8 @@ def _print_result(provider_name: str, dataset_name: str, result: RunResult) -> N
         f"{_fmt(metrics.add_latency_p95_ms, '.1f')}"
     )
     typer.echo(
-        f"Search latency p50/p95 (ms): {metrics.search_latency_p50_ms:.1f} / {metrics.search_latency_p95_ms:.1f}"
+        f"Search latency p50/p95 (ms): {_fmt(metrics.search_latency_p50_ms, '.1f')} / "
+        f"{_fmt(metrics.search_latency_p95_ms, '.1f')}"
     )
     budget_note = "truncated" if result.budget_truncated else "not truncated"
     typer.echo(f"Cost: ${result.total_cost_usd:.4f} (budget: {budget_note})")

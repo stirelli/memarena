@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import random
 from pathlib import Path
 from typing import Protocol
 
 from memarena.datasets.base import DatasetLoader, QAItem, Session
+from memarena.datasets.sampling import stratified_sample
 
 # --- Real schema, confirmed 2026-07-01 against the live origin (do not
 # re-derive without re-checking — see datasets/LICENSES.md):
@@ -133,9 +133,9 @@ class LongMemEvalV2Loader(DatasetLoader):
              stratify_by: str | None = "question_type") -> list[QAItem]:
         self._load_raw()
         items = [self._to_qaitem(q) for q in self._questions if q["domain"] in self._sessions_by_domain]
-        if sample is None or sample >= len(items):
+        if sample is None:
             return sorted(items, key=lambda i: i.id)
-        return self._stratified_sample(items, sample, seed, stratify_by)
+        return stratified_sample(items, sample=sample, seed=seed, stratify_by=stratify_by)
 
     def _to_qaitem(self, q: dict) -> QAItem:
         return QAItem(
@@ -148,25 +148,6 @@ class LongMemEvalV2Loader(DatasetLoader):
             answerable=_question_type_answerable(q["question_type"]),
             gold_answer=q["answer"],
         )
-
-    @staticmethod
-    def _stratified_sample(items: list[QAItem], sample: int, seed: int,
-                            stratify_by: str | None) -> list[QAItem]:
-        rng = random.Random(seed)
-        if not stratify_by:
-            return sorted(rng.sample(items, sample), key=lambda i: i.id)
-        strata: dict[str, list[QAItem]] = {}
-        for item in items:
-            strata.setdefault(getattr(item, stratify_by), []).append(item)
-        n_strata = len(strata)
-        base_quota = sample // n_strata
-        remainder = sample % n_strata
-        selected: list[QAItem] = []
-        for i, (_, bucket) in enumerate(sorted(strata.items())):
-            quota = min(base_quota + (1 if i < remainder else 0), len(bucket))
-            selected.extend(rng.sample(bucket, quota))
-        return sorted(selected, key=lambda i: i.id)
-
 
 def _default_fetcher(cache_dir: Path | str | None) -> Fetcher:
     from memarena.datasets._hf_fetch import HuggingFaceFetcher  # local import: network deps only when needed

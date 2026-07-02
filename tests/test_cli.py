@@ -71,3 +71,37 @@ class TestRunCommand:
         result = runner.invoke(app, ["run", "--config", str(config_path)])
 
         assert result.exit_code != 0
+
+
+class TestPrintResultNASafety:
+    def test_all_na_metrics_print_na_not_fabricated_zeros(self, capsys):
+        # A run where every item infra-errored has no defined metric at all.
+        # It must print N/A across the board and never a fabricated 0.0
+        # latency (review finding F5).
+        from memarena.cli import _print_result
+        from memarena.metrics.deterministic import RunMetrics
+        from memarena.runner import RunResult
+
+        metrics = RunMetrics(
+            recall_at_k={1: None, 3: None, 5: None},
+            mrr=None,
+            add_latency_p50_ms=None,
+            add_latency_p95_ms=None,
+            search_latency_p50_ms=None,
+            search_latency_p95_ms=None,
+            n_items=0,
+            n_scored_items=0,
+        )
+        result = RunResult(
+            run_id="r", seed=1, metrics=metrics, total_cost_usd=0.0,
+            budget_truncated=False, infra_error_count=3, n_items_attempted=3,
+        )
+
+        _print_result("some_provider", "some_dataset", result)
+
+        out = capsys.readouterr().out
+        assert "Recall@5: N/A" in out
+        assert "MRR: N/A" in out
+        assert "Add latency p50/p95 (ms): N/A / N/A" in out
+        assert "Search latency p50/p95 (ms): N/A / N/A" in out
+        assert "0 scored (3 infra errors)" in out

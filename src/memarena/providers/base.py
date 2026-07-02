@@ -26,7 +26,11 @@ class MemoryProvider(ABC):
     """Minimal contract a memory system must satisfy to be benchmarked.
 
     Rules for adapters:
-    - Synchronous facade; wrap async clients internally.
+    - Synchronous facade; wrap async clients internally. add() must return
+      only once the write is SETTLED (queryable by search/get), so the
+      runner's add-latency means time-to-settled for every provider:
+      async backends include their internal settle/poll time, synchronous
+      backends settle on return. reset() is excluded from timing.
     - Do NOT time or aggregate internally; the runner measures wall-clock.
     - Raise memarena.errors.ProviderError with context on failures;
       the runner records the item as `infra_error` (excluded from

@@ -5,6 +5,8 @@ from difflib import SequenceMatcher
 
 import numpy as np
 
+DEFAULT_K_VALUES: tuple[int, ...] = (1, 3, 5, 10)
+
 
 def normalize_content(text: str) -> str:
     return " ".join(text.strip().lower().split())
@@ -75,7 +77,7 @@ def compute_item_metric(
     add_latency_ms: float | None,
     search_latency_ms: float,
     *,
-    k_values: tuple[int, ...] = (1, 3, 5, 10),
+    k_values: tuple[int, ...] = DEFAULT_K_VALUES,
 ) -> ItemMetric:
     return ItemMetric(
         item_id=item_id,
@@ -92,22 +94,22 @@ class RunMetrics:
     mrr: float | None
     add_latency_p50_ms: float | None
     add_latency_p95_ms: float | None
-    search_latency_p50_ms: float
-    search_latency_p95_ms: float
+    search_latency_p50_ms: float | None  # None for an empty run — never a fabricated 0.0
+    search_latency_p95_ms: float | None
     n_items: int
     n_scored_items: int  # items with gold evidence — excludes pure-abstention items
 
 
-def aggregate_run(items: list[ItemMetric], *, k_values: tuple[int, ...] = (1, 3, 5, 10)) -> RunMetrics:
+def aggregate_run(items: list[ItemMetric], *, k_values: tuple[int, ...] = DEFAULT_K_VALUES) -> RunMetrics:
     add_latencies = [item.add_latency_ms for item in items]
-    search_latencies = [item.search_latency_ms for item in items]
+    search_latencies: list[float | None] = [item.search_latency_ms for item in items]
     return RunMetrics(
         recall_at_k={k: mean_of_defined([item.recall_at_k[k] for item in items]) for k in k_values},
         mrr=mean_of_defined([item.reciprocal_rank for item in items]),
         add_latency_p50_ms=percentile_of_defined(add_latencies, 50),
         add_latency_p95_ms=percentile_of_defined(add_latencies, 95),
-        search_latency_p50_ms=percentile(search_latencies, 50),
-        search_latency_p95_ms=percentile(search_latencies, 95),
+        search_latency_p50_ms=percentile_of_defined(search_latencies, 50),
+        search_latency_p95_ms=percentile_of_defined(search_latencies, 95),
         n_items=len(items),
         n_scored_items=sum(1 for item in items if item.reciprocal_rank is not None),
     )

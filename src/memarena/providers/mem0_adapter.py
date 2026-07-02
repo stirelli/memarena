@@ -63,9 +63,22 @@ class Mem0Provider(MemoryProvider):
     live 2026-07-01: a memory took ~5s to become visible via get_all()). To
     honor the MemoryProvider sync-façade contract (Appendix A) and to make
     an immediately-following search() reliable, add() polls get_all() for
-    this namespace until the observed memory count increases, up to
-    POLL_TIMEOUT_S. This means add_latency_ms genuinely includes multi-second
-    settle time — that's real, not a measurement artifact.
+    this namespace until the observed memory set CHANGES in any way (new id,
+    changed content, changed updated_at, or a removal — mem0's own update
+    resolution can consolidate instead of appending, so a count increase is
+    NOT a reliable settle signal), up to POLL_TIMEOUT_S.
+
+    Latency semantics (review finding F4/goal item 5): the runner's
+    add_latency_ms for this provider is TIME-TO-SETTLED — accepted by the
+    API and observable via get_all() — not time-to-accepted. The
+    before-snapshot get_all() and the polling get_all() calls are part of
+    the sync façade and are included; that's the real cost of making an
+    async write queryable, not a measurement artifact.
+
+    Known limitation (documented, not silent): a write whose extraction
+    resolves to a true no-op changes nothing observable, so it polls to the
+    deadline and raises ProviderError; the runner records the item as an
+    infra_error, visible in the journal, never as a fake success.
     """
 
     supports_temporal = True  # mem0 accepts a timestamp per add() call
@@ -96,22 +109,25 @@ class Mem0Provider(MemoryProvider):
 
     @_wrap_mem0_errors
     def add(self, namespace: str, messages: list[dict[str, str]], *, session_id: str, timestamp: str) -> None:
-        before = len(self._client.get_all(filters={"user_id": namespace}).get("results", []))
+        before = self._memories_snapshot(namespace)
         self._add_with_retry(
             messages, user_id=namespace,
             metadata={"session_id": session_id, "source_timestamp": timestamp},
             timestamp=_iso_to_unix(timestamp),
         )
-        self._poll_until_visible(namespace, before)
+        self._poll_until_settled(namespace, before)
 
-    def _poll_until_visible(self, namespace: str, before_count: int) -> None:
+    def _memories_snapshot(self, namespace: str) -> frozenset[tuple]:
+        results = self._client.get_all(filters={"user_id": namespace}).get("results", [])
+        return frozenset((r.get("id"), r.get("memory"), r.get("updated_at")) for r in results)
+
+    def _poll_until_settled(self, namespace: str, before: frozenset[tuple]) -> None:
         deadline = time.monotonic() + POLL_TIMEOUT_S
         while time.monotonic() < deadline:
-            after = len(self._client.get_all(filters={"user_id": namespace}).get("results", []))
-            if after > before_count:
+            if self._memories_snapshot(namespace) != before:
                 return
             time.sleep(POLL_INTERVAL_S)
-        raise ProviderError(f"mem0 add() did not become visible within {POLL_TIMEOUT_S}s for namespace={namespace!r}")
+        raise ProviderError(f"mem0 add() did not settle within {POLL_TIMEOUT_S}s for namespace={namespace!r}")
 
     @_wrap_mem0_errors
     def search(self, namespace: str, query: str, *, top_k: int = 5) -> list[MemoryRecord]:

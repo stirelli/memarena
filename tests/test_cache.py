@@ -13,6 +13,16 @@ class TestIngestionCacheKey:
         k2 = ingestion_cache_key(_info(), dataset_digest="d1", namespace="ns2")
         assert k1 != k2
 
+    def test_key_differs_by_provider_name(self):
+        k1 = ingestion_cache_key(_info(name="mem0"), dataset_digest="d1", namespace="ns1")
+        k2 = ingestion_cache_key(_info(name="baseline_rag"), dataset_digest="d1", namespace="ns1")
+        assert k1 != k2
+
+    def test_key_differs_by_client_version(self):
+        k1 = ingestion_cache_key(_info(client_version="1.0"), dataset_digest="d1", namespace="ns1")
+        k2 = ingestion_cache_key(_info(client_version="2.0"), dataset_digest="d1", namespace="ns1")
+        assert k1 != k2
+
     def test_key_differs_by_config_digest(self):
         k1 = ingestion_cache_key(_info(config_digest="abc"), dataset_digest="d1", namespace="ns1")
         k2 = ingestion_cache_key(_info(config_digest="xyz"), dataset_digest="d1", namespace="ns1")
