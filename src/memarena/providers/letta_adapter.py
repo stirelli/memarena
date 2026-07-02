@@ -84,6 +84,7 @@ class LettaProvider(MemoryProvider):
 
     supports_temporal = True  # passages carry created_at; search returns timestamps
     supports_update_resolution = False  # archival passages are append-only
+    memory_representation = "extractive"  # passages are verbatim session transcripts
 
     def __init__(self, config: dict, *, client=None):
         self._config = config

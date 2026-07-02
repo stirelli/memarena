@@ -154,6 +154,10 @@ class ZepProvider(MemoryProvider):
         if self._search_scope not in ("episodes", "edges"):
             raise ProviderError(f"unsupported zep search_scope {self._search_scope!r} (episodes|edges)")
         self._self_hosted = bool(config.get("self_hosted"))
+        # Episodes return raw ingested transcript chunks (verbatim metrics
+        # apply); edges return distilled facts (verbatim metrics are N/A,
+        # see providers/base.py memory_representation).
+        self.memory_representation = "extractive" if self._search_scope == "episodes" else "abstractive"
         self._episodes_added: dict[str, int] = {}
         self._last_request_at = 0.0
         if self._self_hosted:

@@ -100,8 +100,8 @@ class TestFixture3AbstentionExclusion:
             compute_item_metric("miss", [OTHER_A], [GOLD], 1.0, 1.0, k_values=(1,)),
         ]
         run = aggregate_run(items, k_values=(1,))
-        assert run.recall_at_k[1] == 0.5
-        assert run.mrr == 0.5
+        assert run.verbatim_recall_at_k[1] == 0.5
+        assert run.verbatim_mrr == 0.5
         assert run.n_items == 3
         assert run.n_scored_items == 2
 
@@ -172,9 +172,9 @@ class TestFixture5MultiGoldAndAggregatePercentiles:
             compute_item_metric("D", [OTHER_A, OTHER_B], [GOLD], 30.0, 80.0, k_values=(1, 3)),
         ]
         run = aggregate_run(items, k_values=(1, 3))
-        assert run.mrr == pytest.approx(4 / 9)
-        assert run.recall_at_k[1] == pytest.approx(1 / 3)
-        assert run.recall_at_k[3] == pytest.approx(2 / 3)
+        assert run.verbatim_mrr == pytest.approx(4 / 9)
+        assert run.verbatim_recall_at_k[1] == pytest.approx(1 / 3)
+        assert run.verbatim_recall_at_k[3] == pytest.approx(2 / 3)
         assert run.n_items == 4
         assert run.n_scored_items == 3
         assert run.add_latency_p50_ms == pytest.approx(30.0)
@@ -234,12 +234,12 @@ class TestFixture6NDCG:
             compute_item_metric("D", [OTHER_A, OTHER_B], [GOLD], 30.0, 80.0, k_values=(1, 3)),
         ]
         run = aggregate_run(items, k_values=(1, 3))
-        assert run.ndcg_at_k[3] == pytest.approx((0.5 + 1.0 + 0.0) / 3)
-        assert run.ndcg_at_k[1] == pytest.approx(1 / 3)
+        assert run.verbatim_ndcg_at_k[3] == pytest.approx((0.5 + 1.0 + 0.0) / 3)
+        assert run.verbatim_ndcg_at_k[1] == pytest.approx(1 / 3)
 
     def test_empty_run_ndcg_is_none(self):
         run = aggregate_run([])
-        assert all(v is None for v in run.ndcg_at_k.values())
+        assert all(v is None for v in run.verbatim_ndcg_at_k.values())
 
 
 class TestFixture7ContainmentMatching:
@@ -286,8 +286,8 @@ class TestEmptyRunHasNoFabricatedNumbers:
         run = aggregate_run([])
         assert run.n_items == 0
         assert run.n_scored_items == 0
-        assert run.mrr is None
-        assert all(v is None for v in run.recall_at_k.values())
+        assert run.verbatim_mrr is None
+        assert all(v is None for v in run.verbatim_recall_at_k.values())
         assert run.add_latency_p50_ms is None
         assert run.add_latency_p95_ms is None
         assert run.search_latency_p50_ms is None

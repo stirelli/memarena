@@ -41,6 +41,17 @@ class MemoryProvider(ABC):
     supports_temporal: bool = False
     supports_update_resolution: bool = False
 
+    #: What the store RETURNS on search — a first-class provider attribute:
+    #: "extractive" stores return source text (chunks, transcripts, raw
+    #: episodes), so verbatim evidence matching against gold is meaningful;
+    #: "abstractive" stores return rewritten/distilled memories, so verbatim
+    #: metrics are reported N/A (never 0.0 — a published 0.000 claims "it
+    #: retrieves nothing", which is false: the information is retrieved in
+    #: paraphrased form). Cross-paradigm retrieval quality is measured by
+    #: the judged evidence_coverage metric (Day 4). See
+    #: docs/METHODOLOGY_NOTES.md.
+    memory_representation: str = "extractive"
+
     @abstractmethod
     def info(self) -> ProviderInfo: ...
 

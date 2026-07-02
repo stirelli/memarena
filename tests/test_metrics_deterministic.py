@@ -97,10 +97,10 @@ class TestComputeItemMetric:
             k_values=(1, 3, 5, 10),
         )
         assert isinstance(metric, ItemMetric)
-        assert metric.recall_at_k[1] == 0.0
-        assert metric.recall_at_k[3] == 1.0
-        assert metric.recall_at_k[5] == 1.0
-        assert metric.reciprocal_rank == 1 / 3
+        assert metric.verbatim_recall_at_k[1] == 0.0
+        assert metric.verbatim_recall_at_k[3] == 1.0
+        assert metric.verbatim_recall_at_k[5] == 1.0
+        assert metric.verbatim_reciprocal_rank == 1 / 3
         assert metric.add_latency_ms == 12.0
         assert metric.search_latency_ms == 34.0
 
@@ -109,8 +109,8 @@ class TestComputeItemMetric:
             item_id="smoke-017", retrieved_contents=["a", "b"], gold_evidence=[],
             add_latency_ms=5.0, search_latency_ms=5.0, k_values=(1, 5),
         )
-        assert metric.recall_at_k == {1: None, 5: None}
-        assert metric.reciprocal_rank is None
+        assert metric.verbatim_recall_at_k == {1: None, 5: None}
+        assert metric.verbatim_reciprocal_rank is None
 
 
 class TestAggregateRun:
@@ -124,8 +124,8 @@ class TestAggregateRun:
 
         assert run.n_items == 3
         assert run.n_scored_items == 2
-        assert run.recall_at_k[1] == 0.5   # (1.0 + 0.0) / 2, abstention item excluded
-        assert run.mrr == 0.5              # (1.0 + 0.0) / 2
+        assert run.verbatim_recall_at_k[1] == 0.5   # (1.0 + 0.0) / 2, abstention item excluded
+        assert run.verbatim_mrr == 0.5              # (1.0 + 0.0) / 2
         assert run.add_latency_p50_ms == percentile([10.0, 30.0, 50.0], 50)
         assert run.search_latency_p95_ms == percentile([20.0, 40.0, 60.0], 95)
 
@@ -135,8 +135,8 @@ class TestAggregateRun:
             compute_item_metric("i2", ["y"], [], add_latency_ms=None, search_latency_ms=12.0),
         ]
         metrics = aggregate_run(items)
-        assert metrics.recall_at_k[5] is None
-        assert metrics.mrr is None
+        assert metrics.verbatim_recall_at_k[5] is None
+        assert metrics.verbatim_mrr is None
         assert metrics.n_scored_items == 0
 
     def test_add_latency_percentiles_ignore_reused_ingestion_items(self):

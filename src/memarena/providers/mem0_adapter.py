@@ -125,6 +125,7 @@ class Mem0Provider(MemoryProvider):
 
     supports_temporal = True  # platform accepts a timestamp per add(); False in self-hosted mode (see __init__)
     supports_update_resolution = True  # mem0's own extraction resolves updates
+    memory_representation = "abstractive"  # search returns distilled memories, not source text (both modes)
 
     def __init__(self, config: dict, *, client: Mem0ClientProtocol | None = None):
         self._config = config

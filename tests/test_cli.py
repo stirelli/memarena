@@ -59,8 +59,8 @@ class TestRunCommand:
 
         assert result.exit_code == 0, result.output
         assert "baseline_rag" in result.output
-        assert "Recall@5" in result.output
-        assert "MRR" in result.output
+        assert "Verbatim recall@5" in result.output
+        assert "Verbatim MRR" in result.output
         assert "latency" in result.output.lower()
         assert (tmp_path / "results" / "baseline_rag__smoke__journal.jsonl").exists()
 
@@ -115,9 +115,9 @@ class TestPrintResultNASafety:
         from memarena.runner import RunResult
 
         metrics = RunMetrics(
-            recall_at_k={1: None, 3: None, 5: None},
-            ndcg_at_k={1: None, 3: None, 5: None},
-            mrr=None,
+            verbatim_recall_at_k={1: None, 3: None, 5: None},
+            verbatim_ndcg_at_k={1: None, 3: None, 5: None},
+            verbatim_mrr=None,
             add_latency_p50_ms=None,
             add_latency_p95_ms=None,
             search_latency_p50_ms=None,
@@ -133,9 +133,9 @@ class TestPrintResultNASafety:
         _print_result("some_provider", "some_dataset", result)
 
         out = capsys.readouterr().out
-        assert "Recall@5: N/A" in out
-        assert "NDCG@5: N/A" in out
-        assert "MRR: N/A" in out
+        assert "Verbatim recall@5: N/A" in out
+        assert "Verbatim NDCG@5: N/A" in out
+        assert "Verbatim MRR: N/A" in out
         assert "Add latency p50/p95 (ms): N/A / N/A" in out
         assert "Search latency p50/p95 (ms): N/A / N/A" in out
         assert "0 scored (3 infra errors)" in out

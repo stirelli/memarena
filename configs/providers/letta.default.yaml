@@ -16,4 +16,5 @@
 # Latency semantics for this provider (providers/letta_adapter.py
 # docstring): passages.create embeds synchronously, so add_latency_ms =
 # TIME-TO-SETTLED (same quantity as mem0/baseline_rag).
+# memory_representation: extractive (verbatim transcript passages).
 top_k: 5

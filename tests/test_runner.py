@@ -186,6 +186,43 @@ class TestLatencyWindows:
         assert lines[1]["settle_latency_ms"] is None
 
 
+class TestAbstractiveVerbatimNA:
+    """Abstractive stores (distilled memories) report verbatim metrics as
+    N/A, never 0.0 — a published 0.000 claims "retrieves nothing", which
+    hand-verification showed to be false (docs/METHODOLOGY_NOTES.md)."""
+
+    def test_abstractive_provider_reports_none_never_zero(self, tmp_path):
+        class AbstractiveFake(FakeProvider):
+            memory_representation = "abstractive"
+
+        items = [_item("i1", "ns1", "the sky is blue", "sky", ["the sky is blue"])]
+        journal_path = tmp_path / "j.jsonl"
+        result = run(
+            AbstractiveFake(), items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=journal_path, dataset_digest="d",
+        )
+        assert result.metrics.verbatim_recall_at_k[5] is None
+        assert result.metrics.verbatim_mrr is None
+        assert result.metrics.n_scored_items == 0
+        record = json.loads(journal_path.read_text().strip())
+        assert record["memory_representation"] == "abstractive"
+        assert record["verbatim_reciprocal_rank"] is None
+        assert all(v is None for v in record["verbatim_recall_at_k"].values())
+        assert all(v is None for v in record["verbatim_ndcg_at_k"].values())
+
+    def test_extractive_provider_journal_records_representation_and_scores(self, tmp_path):
+        items = [_item("i1", "ns1", "the sky is blue", "sky", ["the sky is blue"])]
+        journal_path = tmp_path / "j.jsonl"
+        result = run(
+            FakeProvider(), items, run_id="t", seed=42, repetitions=1, top_k=5,
+            budget_usd_max=None, pricing=None, journal_path=journal_path, dataset_digest="d",
+        )
+        assert result.metrics.verbatim_recall_at_k[5] == 1.0
+        record = json.loads(journal_path.read_text().strip())
+        assert record["memory_representation"] == "extractive"
+        assert record["verbatim_reciprocal_rank"] == 1.0
+
+
 class TestRecallKsCappedAtTopK:
     def test_ks_beyond_top_k_are_not_reported(self, tmp_path):
         # With top_k=3 only 3 records are ever requested, so "Recall@5" and
@@ -200,9 +237,9 @@ class TestRecallKsCappedAtTopK:
             dataset_digest="d",
         )
 
-        assert set(result.metrics.recall_at_k) == {1, 3}
+        assert set(result.metrics.verbatim_recall_at_k) == {1, 3}
         record = json.loads(journal_path.read_text().strip())
-        assert set(record["recall_at_k"]) == {"1", "3"}
+        assert set(record["verbatim_recall_at_k"]) == {"1", "3"}
 
     def test_default_top_k_5_reports_up_to_5(self, tmp_path):
         items = [_item("i1", "ns1", "the sky is blue", "sky", ["the sky is blue"])]
@@ -211,7 +248,7 @@ class TestRecallKsCappedAtTopK:
             budget_usd_max=None, pricing=None, journal_path=tmp_path / "j.jsonl",
             dataset_digest="d",
         )
-        assert set(result.metrics.recall_at_k) == {1, 3, 5}
+        assert set(result.metrics.verbatim_recall_at_k) == {1, 3, 5}
 
 
 class TestRun:
@@ -233,8 +270,8 @@ class TestRun:
         assert result.budget_truncated is False
         assert result.infra_error_count == 0
         assert result.metrics.n_items == 2
-        assert result.metrics.recall_at_k[5] == 0.5  # i1 hits, i2 misses
-        assert result.metrics.mrr == 0.5
+        assert result.metrics.verbatim_recall_at_k[5] == 0.5  # i1 hits, i2 misses
+        assert result.metrics.verbatim_mrr == 0.5
 
         lines = journal_path.read_text().strip().splitlines()
         assert len(lines) == 2
@@ -243,7 +280,7 @@ class TestRun:
         assert record["seed"] == 42
         assert record["item_id"] == "i1"
         assert record["status"] == "ok"
-        assert "recall_at_k" in record
+        assert "verbatim_recall_at_k" in record
         assert "add_latency_ms" in record
         assert "search_latency_ms" in record
 

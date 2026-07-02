@@ -80,6 +80,13 @@ class TestMem0Provider:
         assert info.pricing_model == "per_request"  # platform API mode — see LICENSES.md
         assert len(info.config_digest) == 64
 
+    def test_memory_representation_is_abstractive_in_both_modes(self):
+        # mem0 returns distilled memories, so verbatim metrics are N/A
+        # (docs/METHODOLOGY_NOTES.md); the flag drives that in the runner.
+        assert self.provider.memory_representation == "abstractive"
+        oss = Mem0Provider({"top_k": 5, "self_hosted": True}, client=FakeMem0Client())
+        assert oss.memory_representation == "abstractive"
+
     def test_reset_calls_delete_all(self):
         self.provider.reset("ns1")
         assert self.client.deleted == ["ns1"]

@@ -23,6 +23,9 @@
 # the Level-1 retrieval surface content-based gold matching needs; the
 # graph's distilled edges are exercised by Level-2 answer correctness
 # (Day 4). Vendors can PR another config (§6.2).
+# memory_representation: extractive with episodes scope (raw transcript
+# chunks); switching search_scope to edges makes the row abstractive and
+# its verbatim metrics N/A (docs/METHODOLOGY_NOTES.md).
 self_hosted: true
 oss_llm_model: gpt-4.1-mini
 graphiti_db_path: .cache/zep_graphiti/graph.kuzu

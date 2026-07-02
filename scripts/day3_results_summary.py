@@ -35,9 +35,13 @@ def summarize(path: Path) -> dict:
         "journal": path.name,
         "ok": len(ok_rows),
         "infra_errors": errors,
-        "recall_at_5": _mean([r["recall_at_k"].get("5") for r in ok_rows if r.get("recall_at_k")]),
-        "ndcg_at_5": _mean([r["ndcg_at_k"].get("5") for r in ok_rows if r.get("ndcg_at_k")]),
-        "mrr": _mean([r.get("reciprocal_rank") for r in ok_rows]),
+        # journals written before the verbatim rename keep the old keys
+        "verbatim_recall_at_5": _mean([
+            (r.get("verbatim_recall_at_k") or r.get("recall_at_k") or {}).get("5") for r in ok_rows]),
+        "verbatim_ndcg_at_5": _mean([
+            (r.get("verbatim_ndcg_at_k") or r.get("ndcg_at_k") or {}).get("5") for r in ok_rows]),
+        "verbatim_mrr": _mean([
+            r.get("verbatim_reciprocal_rank", r.get("reciprocal_rank")) for r in ok_rows]),
         "add_p50_ms": _pct([r.get("add_latency_ms") for r in ok_rows], 50),
         "add_p95_ms": _pct([r.get("add_latency_ms") for r in ok_rows], 95),
         "settle_p50_ms": _pct([r.get("settle_latency_ms") for r in ok_rows], 50),

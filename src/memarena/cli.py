@@ -83,9 +83,9 @@ def _fmt(value: float | None, spec: str = ".3f") -> str:
 def _print_result(provider_name: str, dataset_name: str, result: RunResult) -> None:
     metrics = result.metrics
     typer.echo(f"=== {provider_name} on {dataset_name} ===")
-    typer.echo(f"Recall@5: {_fmt(metrics.recall_at_k.get(5))}")
-    typer.echo(f"NDCG@5: {_fmt(metrics.ndcg_at_k.get(5))}")
-    typer.echo(f"MRR: {_fmt(metrics.mrr)}")
+    typer.echo(f"Verbatim recall@5: {_fmt(metrics.verbatim_recall_at_k.get(5))}")
+    typer.echo(f"Verbatim NDCG@5: {_fmt(metrics.verbatim_ndcg_at_k.get(5))}")
+    typer.echo(f"Verbatim MRR: {_fmt(metrics.verbatim_mrr)}")
     typer.echo(
         f"Add latency p50/p95 (ms): {_fmt(metrics.add_latency_p50_ms, '.1f')} / "
         f"{_fmt(metrics.add_latency_p95_ms, '.1f')}"

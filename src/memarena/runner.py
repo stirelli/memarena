@@ -127,8 +127,13 @@ def run(
                     continue
 
                 retrieved_contents = [r.content for r in records]
+                # Verbatim evidence metrics only make sense against stores
+                # that return source text; abstractive stores (distilled
+                # memories) report N/A, never 0.0 (providers/base.py,
+                # docs/METHODOLOGY_NOTES.md). Empty gold -> None everywhere.
+                verbatim_gold = item.gold_evidence if provider.memory_representation == "extractive" else []
                 metric = compute_item_metric(
-                    item.id, retrieved_contents, item.gold_evidence, add_latency_ms, search_latency_ms,
+                    item.id, retrieved_contents, verbatim_gold, add_latency_ms, search_latency_ms,
                     k_values=k_values,
                 )
                 total_chars = ingest_chars + len(item.question)
@@ -137,9 +142,10 @@ def run(
                 successful_metrics.append(metric)
                 record.update(
                     status="ok",
-                    recall_at_k=metric.recall_at_k,
-                    ndcg_at_k=metric.ndcg_at_k,
-                    reciprocal_rank=metric.reciprocal_rank,
+                    memory_representation=provider.memory_representation,
+                    verbatim_recall_at_k=metric.verbatim_recall_at_k,
+                    verbatim_ndcg_at_k=metric.verbatim_ndcg_at_k,
+                    verbatim_reciprocal_rank=metric.verbatim_reciprocal_rank,
                     add_latency_ms=metric.add_latency_ms,
                     settle_latency_ms=settle_latency_ms,
                     search_latency_ms=metric.search_latency_ms,

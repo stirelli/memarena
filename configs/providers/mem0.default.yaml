@@ -14,6 +14,9 @@
 # (same quantity as baseline_rag/letta). Note: OSS gates timestamp
 # backdating behind a platform API key, so supports_temporal=False for
 # this row (leaderboard annotation, never a silent penalty).
+# memory_representation: abstractive (returns distilled memories; verbatim
+# metrics report N/A -- see docs/METHODOLOGY_NOTES.md; retrieval quality is
+# measured by judged evidence_coverage from Day 4 on).
 self_hosted: true
 oss_llm_model: gpt-4.1-mini
 oss_vector_store_path: .cache/mem0_oss

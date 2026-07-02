@@ -12,9 +12,12 @@ Status: **pre-launch, Day 3 build.** Implemented so far: the harness runner
 (seeded, journaled, budget-guarded), four providers (`baseline_rag`, `mem0`,
 `zep`, `letta`, client versions pinned), two dataset loaders (LongMemEval V1
 as the primary retrieval-quality track, LongMemEval-V2 as the latency/cost
-track), and Level-1 deterministic metrics (Recall@k, NDCG@k, MRR, latency
-percentiles, metered cost). LLM-judge calibration and the public leaderboard
-land in the days ahead.
+track), and Level-1 deterministic metrics (verbatim evidence recall@k,
+verbatim NDCG@k, verbatim MRR, latency percentiles, metered cost). Verbatim
+metrics apply to extractive stores only; abstractive stores (distilled
+memories) report N/A and are measured by a judged evidence-coverage metric
+from Day 4 on (see docs/METHODOLOGY_NOTES.md). LLM-judge calibration and
+the public leaderboard land in the days ahead.
 
 ## Quickstart
 

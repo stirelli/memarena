@@ -63,6 +63,7 @@ class BaselineRAGProvider(MemoryProvider):
 
     supports_temporal = False
     supports_update_resolution = False
+    memory_representation = "extractive"  # returns raw chunks of ingested text
 
     def __init__(self, config: dict, *, embed_fn: EmbedFn | None = None):
         self._config = config

@@ -241,6 +241,13 @@ class TestSearch:
         with pytest.raises(ProviderError, match="search_scope"):
             ZepProvider({"search_scope": "nodes"}, client=FakeZep())
 
+    def test_memory_representation_follows_search_scope(self):
+        # Episodes return raw transcript chunks (verbatim metrics apply);
+        # edges return distilled facts (verbatim metrics are N/A).
+        assert _provider().memory_representation == "extractive"
+        edges = ZepProvider({"search_scope": "edges"}, client=FakeZep())
+        assert edges.memory_representation == "abstractive"
+
 
 class TestErrorWrapping:
     def test_api_error_becomes_provider_error(self):
